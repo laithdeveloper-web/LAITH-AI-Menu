@@ -1,0 +1,1600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laith Arabiat AI Menu — Talabat Menu to Excel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Kufi+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<style>
+/* ============================================================
+   MenuX AI — design tokens
+   Signature motif: the printed receipt. A dashed "tear" divider,
+   dot-leader checklist rows, and a monospace ledger face carry the
+   idea that a paper menu is being converted into structured rows.
+   ============================================================ */
+:root{
+  --ink:#12181f;
+  --ink-soft:#1a2129;
+  --ink-soft-2:#212a34;
+  --parchment:#FBF7EE;
+  --parchment-dim:#F1EAD9;
+  --amber:#E8A33D;
+  --amber-dark:#C97F1D;
+  --teal:#1F6F6B;
+  --teal-light:#2E8F89;
+  --rose:#C1523D;
+  --ink-text:#161d24;
+  --muted:#8A8272;
+  --muted-2:#a6b0ba;
+  --border:rgba(251,247,238,0.12);
+  --border-strong:rgba(251,247,238,0.22);
+  --font-display:'Fraunces', serif;
+  --font-body:'Inter', sans-serif;
+  --font-mono:'IBM Plex Mono', monospace;
+  --font-ar:'Noto Kufi Arabic', 'Inter', sans-serif;
+  --radius:14px;
+  --radius-sm:8px;
+  --shadow-lg:0 24px 60px -20px rgba(0,0,0,0.55);
+  --shadow-sm:0 6px 18px -10px rgba(0,0,0,0.4);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:
+    radial-gradient(1100px 600px at 8% -10%, rgba(232,163,61,0.12), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(31,111,107,0.16), transparent 55%),
+    var(--ink);
+  color:var(--parchment);
+  font-family:var(--font-body);
+  line-height:1.5;
+  min-height:100vh;
+}
+[dir="rtl"] body, .rtl-content{ font-family: var(--font-ar); }
+a{color:inherit;}
+button{font-family:inherit;}
+::selection{background:var(--amber);color:var(--ink);}
+:focus-visible{outline:2px solid var(--amber); outline-offset:2px; border-radius:4px;}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important;}
+}
+
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px;}
+
+/* ---------- Header ---------- */
+header.site{
+  padding:28px 0 18px;
+  border-bottom:1px solid var(--border);
+}
+header.site .wrap{display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;}
+.brand{display:flex; align-items:center; gap:12px;}
+.brand-mark{
+  width:40px; height:40px; border-radius:10px;
+  background:linear-gradient(155deg, var(--amber), var(--amber-dark));
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-weight:700; color:var(--ink); font-size:19px;
+  box-shadow:var(--shadow-sm);
+  flex-shrink:0;
+}
+.brand-text h1{
+  font-family:var(--font-display); font-size:22px; font-weight:700; margin:0; letter-spacing:-0.01em;
+}
+.brand-text p{margin:2px 0 0; font-size:13px; color:var(--muted-2);}
+.header-actions{display:flex; align-items:center; gap:10px;}
+.pill-btn{
+  background:transparent; border:1px solid var(--border-strong); color:var(--parchment);
+  padding:9px 16px; border-radius:999px; font-size:13px; cursor:pointer; transition:all .18s ease;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.pill-btn:hover{border-color:var(--amber); color:var(--amber);}
+
+/* ---------- Hero / Import ---------- */
+main{padding:48px 0 90px;}
+.hero-head{max-width:640px; margin-bottom:36px;}
+.eyebrow{
+  font-family:var(--font-mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+  color:var(--amber); margin:0 0 12px;
+}
+.hero-head h2{
+  font-family:var(--font-display); font-size:clamp(28px,4vw,42px); line-height:1.08; margin:0 0 14px; font-weight:600; letter-spacing:-0.01em;
+}
+.hero-head p.lead{font-size:16px; color:var(--muted-2); margin:0; max-width:56ch;}
+
+.card{
+  background:var(--parchment); color:var(--ink-text); border-radius:var(--radius);
+  box-shadow:var(--shadow-lg); border:1px solid rgba(0,0,0,0.04);
+}
+.import-card{padding:32px; position:relative; overflow:hidden;}
+.import-card::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:4px;
+  background:linear-gradient(90deg, var(--amber), var(--teal));
+}
+.import-card h3{font-family:var(--font-display); font-size:22px; margin:0 0 6px; font-weight:600;}
+.import-card .sub{color:#6b6357; font-size:14px; margin:0 0 22px;}
+
+.url-row{display:flex; gap:10px; flex-wrap:wrap;}
+.url-field{
+  flex:1 1 320px; position:relative; display:flex; align-items:center;
+  background:#fff; border:1.5px solid #E4DCC8; border-radius:var(--radius-sm);
+  padding:0 4px 0 14px; transition:border-color .15s ease;
+}
+.url-field:focus-within{border-color:var(--amber);}
+.url-field svg{flex-shrink:0; opacity:0.55;}
+.url-field input{
+  flex:1; border:0; outline:0; background:transparent; padding:14px 10px; font-size:14.5px;
+  font-family:var(--font-mono); color:var(--ink-text);
+}
+.btn{
+  border:0; border-radius:var(--radius-sm); padding:14px 22px; font-size:14.5px; font-weight:600;
+  cursor:pointer; display:inline-flex; align-items:center; gap:8px; transition:transform .12s ease, box-shadow .12s ease, background .15s ease;
+  white-space:nowrap;
+}
+.btn:active{transform:translateY(1px);}
+.btn-primary{background:var(--ink); color:var(--parchment);}
+.btn-primary:hover{background:#0b0f14;}
+.btn-primary:disabled{opacity:0.5; cursor:not-allowed;}
+.btn-amber{background:var(--amber); color:var(--ink);}
+.btn-amber:hover{background:var(--amber-dark); color:#fff;}
+.btn-ghost{background:transparent; color:var(--ink-text); border:1.5px solid #E4DCC8;}
+.btn-ghost:hover{border-color:var(--ink-text);}
+.btn-sm{padding:8px 14px; font-size:13px;}
+.btn-teal{background:var(--teal); color:#fff;}
+.btn-teal:hover{background:var(--teal-light);}
+.btn-rose{background:transparent; color:var(--rose); border:1.5px solid rgba(193,82,61,0.35);}
+.btn-rose:hover{background:rgba(193,82,61,0.08);}
+
+.import-meta{display:flex; align-items:center; gap:14px; margin-top:16px; flex-wrap:wrap;}
+.import-meta .or{font-size:12px; color:#9c9282; font-family:var(--font-mono);}
+.normalized-note{
+  margin-top:14px; font-size:12.5px; font-family:var(--font-mono); color:#5c6b64;
+  background:#F1EAD9; border:1px dashed #cfc3a4; border-radius:8px; padding:10px 12px; display:none;
+}
+.normalized-note.show{display:block;}
+.normalized-note b{color:var(--teal);}
+
+.dropzone{
+  margin-top:20px; border:1.5px dashed #D8CCB0; border-radius:var(--radius-sm);
+  padding:18px; text-align:center; font-size:13px; color:#8b8271; transition:all .15s ease; cursor:pointer;
+}
+.dropzone.drag{border-color:var(--amber); background:#FBF3E2; color:var(--amber-dark);}
+
+/* Ticket-tear divider — signature element */
+.tear{
+  display:flex; align-items:center; gap:10px; margin:36px 0; opacity:0.55;
+}
+.tear .dot{width:7px;height:7px;border-radius:50%; background:var(--muted-2); flex-shrink:0;}
+.tear .line{flex:1; height:0; border-top:1.5px dashed var(--border-strong);}
+.tear span.lbl{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted-2);}
+
+/* ---------- Fallback panel ---------- */
+.fallback-panel{padding:26px 28px; margin-top:20px; border-left:3px solid var(--rose);}
+.fallback-panel h4{margin:0 0 8px; font-family:var(--font-display); font-size:18px; display:flex; align-items:center; gap:8px;}
+.fallback-panel p{margin:0 0 14px; font-size:14px; color:#5c5346; max-width:70ch;}
+.fallback-panel textarea{
+  width:100%; min-height:120px; border:1.5px solid #E4DCC8; border-radius:8px; padding:12px;
+  font-family:var(--font-mono); font-size:12.5px; resize:vertical; color:var(--ink-text);
+}
+.fallback-actions{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;}
+.method-tags{display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 16px;}
+.method-tag{
+  font-family:var(--font-mono); font-size:11px; padding:5px 10px; border-radius:999px;
+  border:1px solid #E4DCC8; color:#8b8271;
+}
+.method-tag.failed{color:var(--rose); border-color:rgba(193,82,61,0.3); background:rgba(193,82,61,0.06);}
+.method-tag.ok{color:var(--teal); border-color:rgba(31,111,107,0.3); background:rgba(31,111,107,0.06);}
+
+/* ---------- Processing (receipt-style checklist) ---------- */
+.processing-card{padding:30px 32px;}
+.processing-card h3{font-family:var(--font-display); font-size:19px; margin:0 0 4px;}
+.processing-card .sub{font-size:13px; color:#8b8271; margin:0 0 20px;}
+.stage-list{list-style:none; margin:0; padding:0; font-family:var(--font-mono); font-size:13.5px;}
+.stage-list li{
+  display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px dashed #E9E1CE; color:#b3ab99;
+  transition:color .2s ease;
+}
+.stage-list li:last-child{border-bottom:0;}
+.stage-list li .chk{
+  width:18px; height:18px; border-radius:5px; border:1.5px solid #D8CCB0; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; font-size:11px; transition:all .2s ease;
+}
+.stage-list li.active{color:var(--ink-text);}
+.stage-list li.active .chk{border-color:var(--amber);}
+.stage-list li.active .chk::after{content:""; width:8px; height:8px; border-radius:50%; background:var(--amber); animation:pulse 1s infinite;}
+.stage-list li.done{color:var(--ink-text);}
+.stage-list li.done .chk{background:var(--teal); border-color:var(--teal); color:#fff;}
+@keyframes pulse{0%,100%{opacity:1;} 50%{opacity:0.3;}}
+.progress-track{height:6px; background:#EDE5D2; border-radius:99px; overflow:hidden; margin-bottom:22px;}
+.progress-fill{height:100%; width:0%; background:linear-gradient(90deg, var(--amber), var(--teal)); transition:width .3s ease;}
+
+/* ---------- Results dashboard ---------- */
+.results{display:none;}
+.results.show{display:block;}
+.stat-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:22px;}
+.stat-card{padding:16px 18px;}
+.stat-card .num{font-family:var(--font-display); font-size:26px; font-weight:600; color:var(--ink-text);}
+.stat-card .lbl{font-size:12px; color:#8b8271; text-transform:uppercase; letter-spacing:0.05em; font-family:var(--font-mono);}
+.demo-badge{
+  display:inline-flex; align-items:center; gap:6px; background:rgba(232,163,61,0.15); color:var(--amber);
+  font-family:var(--font-mono); font-size:11px; padding:5px 10px; border-radius:999px; margin-bottom:14px;
+}
+
+.panel-head{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:18px;}
+.panel-head h3{font-family:var(--font-display); font-size:20px; margin:0;}
+.toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:18px;}
+.search-field{
+  flex:1 1 220px; display:flex; align-items:center; gap:8px; background:#fff; border:1.5px solid #E4DCC8;
+  border-radius:var(--radius-sm); padding:9px 12px;
+}
+.search-field input{border:0; outline:0; flex:1; font-size:13.5px; background:transparent; color:var(--ink-text);}
+select.select-field{
+  border:1.5px solid #E4DCC8; border-radius:var(--radius-sm); padding:9px 12px; font-size:13.5px;
+  background:#fff; color:var(--ink-text);
+}
+
+/* category chips */
+.cat-scroll{display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; margin-bottom:20px;}
+.cat-chip{
+  flex-shrink:0; background:#fff; border:1.5px solid #E4DCC8; border-radius:12px; padding:12px 16px; min-width:118px;
+  cursor:pointer; transition:all .15s ease; position:relative;
+}
+.cat-chip.active{border-color:var(--teal); background:rgba(31,111,107,0.06);}
+.cat-chip .cname{font-weight:600; font-size:13px; color:var(--ink-text); display:block; margin-bottom:2px;}
+.cat-chip .ccount{font-family:var(--font-mono); font-size:11px; color:#8b8271;}
+
+/* table */
+.table-scroll{overflow-x:auto; border:1px solid #E9E1CE; border-radius:10px;}
+table.menu-table{width:100%; border-collapse:collapse; min-width:760px; font-size:13.5px;}
+table.menu-table thead th{
+  background:var(--ink); color:var(--parchment); text-align:left; padding:11px 14px; font-size:11.5px;
+  text-transform:uppercase; letter-spacing:0.04em; font-family:var(--font-mono); position:sticky; top:0;
+}
+table.menu-table tbody td{padding:10px 14px; border-bottom:1px solid #EFE8D8; vertical-align:top; color:var(--ink-text);}
+table.menu-table tbody tr:nth-child(even){background:#FBF7EE;}
+table.menu-table tbody tr:hover{background:#F5EEDB;}
+table.menu-table td.price{font-family:var(--font-mono); text-align:right; white-space:nowrap;}
+table.menu-table td.desc{max-width:280px; color:#6b6357;}
+.editable{cursor:text; border-radius:4px; padding:2px 4px; display:inline-block; min-width:20px;}
+.editable:hover{background:rgba(232,163,61,0.15);}
+.editable:focus{outline:2px solid var(--amber); background:#fff;}
+.row-actions{display:flex; gap:6px;}
+.icon-btn{
+  border:0; background:transparent; cursor:pointer; padding:5px; border-radius:6px; color:#a39a85; display:flex;
+}
+.icon-btn:hover{background:rgba(193,82,61,0.1); color:var(--rose);}
+.badge-unavail{font-family:var(--font-mono); font-size:10.5px; color:var(--rose); border:1px solid rgba(193,82,61,0.3); border-radius:5px; padding:1px 6px;}
+.empty-row td{text-align:center; padding:40px 20px; color:#a39a85;}
+
+/* Export bar */
+.export-bar{
+  display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+  margin-top:26px; padding-top:20px; border-top:1px dashed #E9E1CE;
+}
+.export-bar .filename{font-family:var(--font-mono); font-size:12px; color:#8b8271;}
+.export-actions{display:flex; gap:10px; flex-wrap:wrap;}
+
+/* toast */
+.toast-wrap{position:fixed; bottom:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:10px; max-width:340px;}
+.toast{
+  background:var(--ink-soft); border:1px solid var(--border-strong); color:var(--parchment); padding:13px 16px;
+  border-radius:10px; font-size:13.5px; box-shadow:var(--shadow-lg); display:flex; gap:10px; align-items:flex-start;
+  animation:toastin .25s ease;
+}
+.toast.err{border-left:3px solid var(--rose);}
+.toast.ok{border-left:3px solid var(--teal);}
+.toast.info{border-left:3px solid var(--amber);}
+@keyframes toastin{from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);}}
+
+/* debug panel */
+.debug-toggle{position:fixed; bottom:20px; left:20px; z-index:900;}
+.debug-panel{
+  position:fixed; bottom:70px; left:20px; width:320px; max-height:60vh; overflow:auto; z-index:900;
+  background:var(--ink-soft); border:1px solid var(--border-strong); border-radius:12px; padding:16px;
+  font-family:var(--font-mono); font-size:11.5px; color:var(--muted-2); display:none; box-shadow:var(--shadow-lg);
+}
+.debug-panel.show{display:block;}
+.debug-panel h5{margin:0 0 10px; color:var(--amber); font-size:11px; text-transform:uppercase; letter-spacing:0.08em;}
+.debug-row{display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-bottom:1px solid var(--border);}
+.debug-row b{color:var(--parchment); font-weight:500;}
+
+/* empty state */
+.empty-state{text-align:center; padding:60px 20px; color:var(--muted-2);}
+.empty-state svg{margin-bottom:14px; opacity:0.5;}
+.empty-state h4{font-family:var(--font-display); font-size:18px; color:var(--parchment); margin:0 0 6px;}
+.empty-state p{font-size:13.5px; margin:0;}
+
+footer.site{padding:30px 0; text-align:center; color:var(--muted-2); font-size:12px; border-top:1px solid var(--border);}
+
+/* RTL support */
+[dir="rtl"] table.menu-table thead th, [dir="rtl"] table.menu-table tbody td{text-align:right;}
+[dir="rtl"] .url-field{padding:0 14px 0 4px;}
+[dir="rtl"] .fallback-panel{border-left:0; border-right:3px solid var(--rose);}
+
+/* responsive */
+@media (max-width:640px){
+  .import-card, .processing-card, .fallback-panel{padding:22px 18px;}
+  .url-row{flex-direction:column;}
+  .btn{width:100%; justify-content:center;}
+  .export-actions{width:100%;}
+  .export-actions .btn{flex:1;}
+  .panel-head{flex-direction:column; align-items:flex-start;}
+  header.site .wrap{flex-direction:column; align-items:flex-start;}
+  .debug-panel{width:calc(100vw - 40px);}
+}
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-mark">AI</div>
+      <div class="brand-text">
+        <h1>Laith Arabiat AI Menu</h1>
+        <p>Turn restaurant menus into professional Excel files.</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="pill-btn" id="btnHistory" type="button">Recent</button>
+      <button class="pill-btn" id="btnClearHistory" type="button" title="Clear saved history">Clear history</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <!-- ============ IMPORT ============ -->
+    <section id="importSection">
+      <div class="hero-head">
+        <p class="eyebrow">Talabat → Excel converter</p>
+        <h2>Import Restaurant Menu</h2>
+        <p class="lead">Paste a Talabat restaurant URL and automatically organize its menu into a professional Excel spreadsheet — categories, prices, sizes and add‑ons, cleaned and ready to use.</p>
+      </div>
+
+      <div class="card import-card">
+        <h3>Analyze a menu</h3>
+        <p class="sub">Works with normal Talabat links and redirect links (e.g. shared from Instagram).</p>
+
+        <div class="url-row">
+          <label class="url-field" for="urlInput">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg>
+            <input id="urlInput" type="text" inputmode="url" autocomplete="off" placeholder="https://www.talabat.com/uae/restaurant/614992/shaghf-cafe" aria-label="Talabat restaurant URL">
+          </label>
+          <button class="btn btn-primary" id="btnAnalyze" type="button">Analyze Menu</button>
+        </div>
+
+        <div class="import-meta">
+          <span class="or">or</span>
+          <button class="btn btn-ghost btn-sm" id="btnDemo" type="button">Try Demo</button>
+          <button class="btn btn-ghost btn-sm" id="btnPasteData" type="button">Import HTML / JSON</button>
+        </div>
+
+        <div class="normalized-note" id="normalizedNote"></div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Drop an HTML or JSON export here, or click to browse">
+          Drag a saved page (.html) or menu export (.json) here — or click to browse
+          <input type="file" id="fileInput" accept=".html,.htm,.json,.txt" style="display:none">
+        </div>
+      </div>
+
+      <!-- Fallback / user-assisted extraction panel -->
+      <div class="card fallback-panel" id="fallbackPanel" style="display:none;">
+        <h4>⚠️ Direct browser extraction is restricted for this website</h4>
+        <p>Your browser blocked direct access to this page because of cross‑origin (CORS) security restrictions enforced by the site — this is a browser protection, not an application bug. The app cannot pretend the fetch worked, so nothing was invented. Use the supported import method below instead: open the restaurant page, choose <b>"View Page Source"</b> (or save the page), then paste the HTML — or paste a JSON export if you have one.</p>
+        <div class="method-tags" id="methodTags"></div>
+        <textarea id="pasteArea" placeholder="Paste the page HTML or a JSON menu export here…"></textarea>
+        <div class="fallback-actions">
+          <button class="btn btn-teal btn-sm" id="btnProcessPaste" type="button">Process Pasted Data</button>
+          <button class="btn btn-ghost btn-sm" id="btnTryDemoFromFallback" type="button">Use Demo Data Instead</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="tear" id="tearDivider" style="display:none;">
+      <div class="dot"></div><div class="line"></div>
+      <span class="lbl">Menu → Spreadsheet</span>
+      <div class="line"></div><div class="dot"></div>
+    </div>
+
+    <!-- ============ PROCESSING ============ -->
+    <section id="processingSection" style="display:none;">
+      <div class="card processing-card">
+        <h3>Processing your menu</h3>
+        <p class="sub" id="processingSub">Working through extraction, cleaning and organization…</p>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        <ul class="stage-list" id="stageList"></ul>
+      </div>
+    </section>
+
+    <!-- ============ RESULTS ============ -->
+    <section class="results" id="resultsSection">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow" style="margin-bottom:6px;">Step 2 — Review</p>
+          <h3 style="font-family:var(--font-display); color:var(--parchment); font-size:24px; margin:0;" id="restaurantTitle">Restaurant</h3>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btnStartOver" type="button" style="background:var(--parchment);">Start over</button>
+      </div>
+
+      <span class="demo-badge" id="demoBadge" style="display:none;">◆ Demo data</span>
+
+      <div class="stat-grid" id="statGrid"></div>
+
+      <div class="card" style="padding:24px;">
+        <div class="panel-head">
+          <h3>Categories</h3>
+        </div>
+        <div class="cat-scroll" id="catScroll"></div>
+
+        <div class="toolbar">
+          <div class="search-field">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="text" id="searchInput" placeholder="Search item name, description, category…">
+          </div>
+          <select class="select-field" id="sortSelect">
+            <option value="original">Sort: Original order</option>
+            <option value="name">Sort: Name (A–Z)</option>
+            <option value="price-asc">Sort: Price (low–high)</option>
+            <option value="price-desc">Sort: Price (high–low)</option>
+            <option value="category">Sort: Category</option>
+          </select>
+          <button class="btn btn-teal btn-sm" id="btnAddItem" type="button">+ Add item</button>
+        </div>
+
+        <div class="table-scroll">
+          <table class="menu-table" id="menuTable">
+            <thead>
+              <tr>
+                <th style="width:16%">Category</th>
+                <th style="width:18%">Item</th>
+                <th>Description</th>
+                <th style="width:9%">Price</th>
+                <th style="width:7%">Currency</th>
+                <th style="width:6%">Status</th>
+                <th style="width:8%">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="export-bar">
+          <div class="filename" id="filenamePreview">filename.xlsx</div>
+          <div class="export-actions">
+            <button class="btn btn-ghost btn-sm" id="btnExportJson" type="button">Export JSON</button>
+            <button class="btn btn-ghost btn-sm" id="btnExportCsv" type="button">Download CSV</button>
+            <button class="btn btn-amber" id="btnExportXlsx" type="button">⬇ Download Excel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ERROR ============ -->
+    <section id="errorSection" style="display:none;">
+      <div class="card fallback-panel" style="border-left-color:var(--rose);">
+        <h4>⚠️ <span id="errorTitle">Something needs your attention</span></h4>
+        <p id="errorBody">—</p>
+        <div class="fallback-actions">
+          <button class="btn btn-ghost btn-sm" id="btnErrorBack" type="button">Back to import</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap">Laith Arabiat AI Menu — runs entirely in your browser. No menu data is sent to any server except the AI cleaning step, if you enable it.</div>
+</footer>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<button class="pill-btn debug-toggle" id="btnDebugToggle" type="button">🐞 Debug</button>
+<div class="debug-panel" id="debugPanel">
+  <h5>Debug info</h5>
+  <div id="debugContent"></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+const State = {
+  restaurant: { name:"", country:"", city:"", currency:"", sourceUrl:"", extractedAt:null },
+  items: [],           // normalized menu items
+  categories: [],       // { name, count }
+  activeCategory: "All Categories",
+  searchTerm: "",
+  sortMode: "original",
+  isDemo: false,
+  debug: {
+    normalizedUrl:"", extractionMethod:"", rawRecordCount:0, normalizedRecordCount:0,
+    duplicateCount:0, detectedCategories:0, detectedCurrency:"", warnings:[]
+  }
+};
+let itemIdCounter = 1;
+
+/* =========================================================================
+   UTILITIES
+   ========================================================================= */
+function $(sel){ return document.querySelector(sel); }
+function $all(sel){ return Array.from(document.querySelectorAll(sel)); }
+function debounce(fn, wait){ let t; return function(...a){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a), wait); }; }
+
+function escapeHtml(str){
+  if(str===null||str===undefined) return "";
+  return String(str)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+}
+
+function decodeEntities(str){
+  if(!str) return "";
+  const ta = document.createElement("textarea");
+  ta.innerHTML = str;
+  return ta.value;
+}
+
+function stripHtmlTags(str){
+  if(!str) return "";
+  const doc = new DOMParser().parseFromString(String(str), "text/html");
+  return (doc.body.textContent || "").trim();
+}
+
+function normalizeWhitespace(str){
+  return String(str||"").replace(/\s+/g," ").trim();
+}
+
+function cleanText(str){
+  return normalizeWhitespace(decodeEntities(stripHtmlTags(str)));
+}
+
+function containsArabic(str){
+  return /[\u0600-\u06FF]/.test(String(str||""));
+}
+
+function toastMsg(msg, type){
+  type = type || "info";
+  const wrap = $("#toastWrap");
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  const icon = type==="err" ? "✕" : (type==="ok" ? "✓" : "ℹ");
+  el.innerHTML = '<span>'+icon+'</span><span>'+escapeHtml(msg)+'</span>';
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transition="opacity .3s"; setTimeout(()=>el.remove(),300); }, 4200);
+}
+
+/* Currency detection */
+const CURRENCY_MAP = [
+  { re:/AED|د\.إ/i, code:"AED" },
+  { re:/SAR|ر\.س|﷼/i, code:"SAR" },
+  { re:/KWD|د\.ك/i, code:"KWD" },
+  { re:/BHD|د\.ب/i, code:"BHD" },
+  { re:/QAR|ر\.ق/i, code:"QAR" },
+  { re:/OMR|ر\.ع/i, code:"OMR" },
+  { re:/EGP|ج\.م/i, code:"EGP" },
+  { re:/JOD|د\.ا/i, code:"JOD" },
+  { re:/\$/,        code:"USD" },
+  { re:/€/,         code:"EUR" },
+  { re:/£/,         code:"GBP" },
+];
+function detectCurrency(str){
+  if(!str) return "";
+  for(const c of CURRENCY_MAP){ if(c.re.test(str)) return c.code; }
+  return "";
+}
+
+/* Parse a raw price string/number into { value, currency } */
+function parsePriceValue(raw){
+  if(raw===null||raw===undefined) return { value:null, currency:"" };
+  if(typeof raw === "number") return { value: round2(raw), currency:"" };
+  let s = String(raw).trim();
+  const currency = detectCurrency(s);
+  s = s.replace(/[^\d.,\-]/g, ""); // strip letters/symbols
+  if(!s) return { value:null, currency };
+  // normalize thousand/decimal separators: assume last separator is decimal if both present
+  if(s.indexOf(",")>-1 && s.indexOf(".")>-1){
+    if(s.lastIndexOf(",") > s.lastIndexOf(".")){ s = s.replace(/\./g,"").replace(",", "."); }
+    else { s = s.replace(/,/g,""); }
+  } else if(s.indexOf(",")>-1){
+    // single comma - likely decimal in some locales, or thousands. Assume thousands if 3 digits follow.
+    const parts = s.split(",");
+    if(parts[parts.length-1].length===3){ s = s.replace(/,/g,""); } else { s = s.replace(",", "."); }
+  }
+  const num = parseFloat(s);
+  return { value: isNaN(num) ? null : round2(num), currency };
+}
+function round2(n){ return Math.round(n*100)/100; }
+
+/* =========================================================================
+   URL NORMALIZATION
+   ========================================================================= */
+function normalizeInputUrl(raw){
+  const out = { originalUrl: raw, normalizedUrl:"", country:"", restaurantId:"", slug:"", valid:false, error:"", wasRedirect:false };
+  if(!raw || !raw.trim()){ out.error = "empty"; return out; }
+  let s = raw.trim();
+
+  // Detect wrapper redirect links (Instagram, Facebook, generic ?u=/?url= patterns) and unwrap.
+  try{
+    const u = new URL(s);
+    const redirectHosts = ["l.instagram.com","l.facebook.com","lm.facebook.com"];
+    if(redirectHosts.includes(u.hostname) || u.searchParams.has("u") || u.searchParams.has("url")){
+      const embedded = u.searchParams.get("u") || u.searchParams.get("url");
+      if(embedded){
+        let decoded = embedded;
+        try{ decoded = decodeURIComponent(decoded); }catch(e){}
+        try{ decoded = decodeURIComponent(decoded); }catch(e){} // handle double-encoding
+        s = decoded;
+        out.wasRedirect = true;
+      }
+    }
+  }catch(e){ /* not a valid absolute URL yet, continue with raw string */ }
+
+  // If still not a full URL, but looks like a talabat path, prefix scheme.
+  if(!/^https?:\/\//i.test(s)){
+    if(/talabat\.com/i.test(s)) s = "https://" + s.replace(/^\/*/,"");
+  }
+
+  let parsed;
+  try{ parsed = new URL(s); }catch(e){ out.error = "invalid"; return out; }
+
+  if(!/talabat\.com$/i.test(parsed.hostname.replace(/^www\./,"")) ){
+    out.error = "not-talabat";
+    out.normalizedUrl = parsed.href;
+    return out;
+  }
+
+  // Expected path: /{country}/restaurant/{id}/{slug}
+  const segs = parsed.pathname.split("/").filter(Boolean);
+  const rIdx = segs.findIndex(s2 => s2.toLowerCase()==="restaurant");
+  if(rIdx > -1){
+    out.country = segs[rIdx-1] || "";
+    out.restaurantId = segs[rIdx+1] || "";
+    out.slug = segs[rIdx+2] || "";
+  } else {
+    out.country = segs[0] || "";
+  }
+
+  parsed.search = ""; parsed.hash = "";
+  out.normalizedUrl = parsed.href;
+  out.valid = true;
+  return out;
+}
+
+/* =========================================================================
+   EXTRACTION ENGINE
+   Strategy 1: direct fetch (will usually fail due to CORS — handled honestly)
+   Strategy 2: parse embedded structured data (JSON-LD / __NEXT_DATA__ / state blobs)
+   Strategy 3: generic recursive pattern search for menu-shaped data
+   Strategy 4: user-assisted paste fallback (always available)
+   ========================================================================= */
+
+async function attemptDirectFetch(url){
+  const controller = new AbortController();
+  const timeout = setTimeout(()=>controller.abort(), 9000);
+  try{
+    const res = await fetch(url, { mode:"cors", signal: controller.signal });
+    clearTimeout(timeout);
+    if(!res.ok) return { ok:false, reason:"http-"+res.status };
+    const text = await res.text();
+    return { ok:true, html:text };
+  }catch(err){
+    clearTimeout(timeout);
+    return { ok:false, reason: (err && err.name==="AbortError") ? "timeout" : "cors-or-network" };
+  }
+}
+
+/* Search a parsed HTML document (or raw string) for embedded JSON blobs. */
+function extractEmbeddedJsonBlobs(source){
+  const blobs = [];
+  let doc;
+  try{ doc = new DOMParser().parseFromString(source, "text/html"); }catch(e){ doc = null; }
+
+  if(doc){
+    // JSON-LD
+    doc.querySelectorAll('script[type="application/ld+json"]').forEach(s=>{
+      try{ blobs.push(JSON.parse(s.textContent)); }catch(e){}
+    });
+    // Common app-state script tags
+    doc.querySelectorAll('script').forEach(s=>{
+      const txt = s.textContent || "";
+      if(/__NEXT_DATA__|__INITIAL_STATE__|__APOLLO_STATE__|window\.__DATA__/.test(txt)){
+        const m = txt.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/) || txt.match(/=\s*(\{[\s\S]*\})\s*<\/script>/);
+        if(m){
+          try{ blobs.push(JSON.parse(m[1])); }catch(e){}
+        }
+      }
+    });
+    // id="__NEXT_DATA__"
+    const nd = doc.querySelector('script#__NEXT_DATA__');
+    if(nd){ try{ blobs.push(JSON.parse(nd.textContent)); }catch(e){} }
+  }
+
+  // As a last resort, scan the raw string for large {...} JSON objects containing "price"
+  if(blobs.length===0){
+    const re = /\{[^{}]{0,2}"[a-zA-Z_]*[Pp]rice"[\s\S]{0,20000}?\}/g;
+    let match; let tries=0;
+    while((match = re.exec(source)) && tries<25){
+      tries++;
+      try{ blobs.push(JSON.parse(match[0])); }catch(e){ /* ignore fragments that don't parse */ }
+    }
+  }
+  return blobs;
+}
+
+/* Recursively search an arbitrary JSON structure for arrays of menu-item-like objects. */
+function findMenuCandidates(node, path, results, depth){
+  depth = depth || 0;
+  if(depth > 12 || node===null || node===undefined) return;
+  if(Array.isArray(node)){
+    if(node.length && node.every(el => el && typeof el==="object" && looksLikeMenuItem(el))){
+      results.push(node);
+    } else {
+      node.forEach(child => findMenuCandidates(child, path, results, depth+1));
+    }
+  } else if(typeof node === "object"){
+    Object.keys(node).forEach(key=>{
+      findMenuCandidates(node[key], path ? path+"."+key : key, results, depth+1);
+    });
+  }
+}
+function looksLikeMenuItem(obj){
+  const keys = Object.keys(obj).map(k=>k.toLowerCase());
+  const hasName = keys.some(k => ["name","title","itemname","productname"].includes(k));
+  const hasPrice = keys.some(k => ["price","amount","cost","unitprice"].includes(k));
+  return hasName && hasPrice;
+}
+
+function pick(obj, candidates){
+  for(const c of candidates){
+    if(obj[c]!==undefined && obj[c]!==null && obj[c]!=="") return obj[c];
+    // case-insensitive fallback
+    const key = Object.keys(obj).find(k=>k.toLowerCase()===c.toLowerCase());
+    if(key && obj[key]!==undefined && obj[key]!==null && obj[key]!=="") return obj[key];
+  }
+  return undefined;
+}
+
+/* Map an arbitrary raw record onto our normalized data model. */
+function mapRawItem(raw, fallbackCategory){
+  const name = cleanText(pick(raw, ["name","title","itemName","productName","nameEn","en_name"]));
+  const desc = cleanText(pick(raw, ["description","desc","details","summary"]) || "");
+  const priceRaw = pick(raw, ["price","amount","cost","unitPrice","finalPrice"]);
+  const { value: price, currency: parsedCurrency } = parsePriceValue(priceRaw);
+  const currency = cleanText(pick(raw, ["currency","currencyCode","curr"]) || parsedCurrency || "");
+  const category = cleanText(pick(raw, ["category","categoryName","section","group"]) || fallbackCategory || "Uncategorized");
+  const image = pick(raw, ["image","imageUrl","img","photo","thumbnail","picture"]) || "";
+  const available = pick(raw, ["available","isAvailable","inStock"]);
+  const sizesRaw = pick(raw, ["sizes","variants","options"]) || [];
+  const addonsRaw = pick(raw, ["addons","addOns","modifiers","extras"]) || [];
+
+  const sizes = Array.isArray(sizesRaw) ? sizesRaw.map(v=>{
+    if(typeof v === "string") return { name:cleanText(v), price:null };
+    const p = parsePriceValue(pick(v,["price","amount"]));
+    return { name: cleanText(pick(v,["name","title","label"]) || ""), price: p.value };
+  }).filter(v=>v.name) : [];
+
+  const addons = Array.isArray(addonsRaw) ? addonsRaw.map(v=>{
+    if(typeof v === "string") return { name:cleanText(v), price:null };
+    const p = parsePriceValue(pick(v,["price","amount"]));
+    return { name: cleanText(pick(v,["name","title","label"]) || ""), price: p.value };
+  }).filter(v=>v.name) : [];
+
+  if(!name) return null;
+
+  return {
+    id: itemIdCounter++,
+    category: category || "Uncategorized",
+    subCategory: cleanText(pick(raw,["subCategory","subcategory"]) || ""),
+    itemName: name,
+    description: desc,
+    price: price,
+    currency: currency,
+    imageUrl: typeof image === "string" ? image : "",
+    available: available===undefined ? true : !!available,
+    sizes: sizes,
+    addons: addons,
+    notes: ""
+  };
+}
+
+/* Walk all discovered JSON blobs and produce a flat list of raw normalized items. */
+function extractItemsFromBlobs(blobs){
+  const candidateArrays = [];
+  blobs.forEach(b => findMenuCandidates(b, "", candidateArrays, 0));
+  const items = [];
+  candidateArrays.forEach(arr=>{
+    arr.forEach(raw=>{
+      const mapped = mapRawItem(raw, null);
+      if(mapped) items.push(mapped);
+    });
+  });
+  return items;
+}
+
+/* Deduplicate items by category+name+price */
+function dedupeItems(items){
+  const seen = new Set();
+  const out = [];
+  let dupCount = 0;
+  items.forEach(it=>{
+    const key = (it.category||"").toLowerCase()+"|"+(it.itemName||"").toLowerCase()+"|"+it.price;
+    if(seen.has(key)){ dupCount++; return; }
+    seen.add(key);
+    out.push(it);
+  });
+  return { items: out, duplicates: dupCount };
+}
+
+function inferRestaurantMeta(blobs, normalizedUrlInfo){
+  const meta = { name:"", country: normalizedUrlInfo.country || "", city:"", currency:"" };
+  const results = [];
+  blobs.forEach(b => findRestaurantMetaCandidates(b, results, 0));
+  if(results.length){
+    const r = results[0];
+    meta.name = cleanText(pick(r,["name","restaurantName","title"]) || "");
+    meta.city = cleanText(pick(r,["city","area","location"]) || "");
+    meta.currency = cleanText(pick(r,["currency","currencyCode"]) || "");
+  }
+  return meta;
+}
+function findRestaurantMetaCandidates(node, results, depth){
+  depth = depth || 0;
+  if(depth>10 || !node || typeof node!=="object") return;
+  if(!Array.isArray(node)){
+    const keys = Object.keys(node).map(k=>k.toLowerCase());
+    if(keys.includes("name") && (keys.includes("cuisines") || keys.includes("rating") || keys.includes("deliverytime") || keys.includes("branches"))){
+      results.push(node); return;
+    }
+  }
+  const children = Array.isArray(node) ? node : Object.values(node);
+  children.forEach(c => findRestaurantMetaCandidates(c, results, depth+1));
+}
+
+/* =========================================================================
+   LOCAL INTELLIGENT NORMALIZATION LAYER
+   (works fully offline — an optional AI cleaning hook can call out to a
+   model later without needing to change anything below)
+   ========================================================================= */
+function localNormalizeDataset(items){
+  const cleaned = items.map(it=>({
+    ...it,
+    itemName: cleanText(it.itemName),
+    description: cleanText(it.description),
+    category: cleanText(it.category) || "Uncategorized",
+  })).filter(it=>it.itemName);
+  const { items: deduped, duplicates } = dedupeItems(cleaned);
+  return { items: deduped, duplicates };
+}
+
+/*
+ * Modular AI cleaning hook. Swap the body of this function to call an LLM
+ * endpoint (via your own backend/proxy — never embed a secret API key in
+ * this file) to further normalize names, translate/segment bilingual
+ * strings, or infer missing categories. The app works fully without it.
+ */
+async function processMenuWithAI(data){
+  // No AI endpoint configured — fall back to the local normalization engine.
+  return localNormalizeDataset(data);
+}
+
+/* =========================================================================
+   DEMO DATA
+   ========================================================================= */
+function buildDemoDataset(){
+  const cats = [
+    { en:"Appetizers", ar:"مقبلات" }, { en:"Shawarma & Grills", ar:"شاورما ومشاوي" },
+    { en:"Burgers", ar:"برجر" }, { en:"Salads", ar:"سلطات" }, { en:"Desserts", ar:"حلويات" },
+    { en:"Beverages", ar:"مشروبات" }
+  ];
+  const bank = {
+    "Appetizers": [
+      ["Hummus with Pita", "حمص مع خبز", "Creamy chickpea dip served with warm pita bread", 12.5],
+      ["Fattoush Bites", "فتوش صغير", "Crisp pita chips tossed with fresh vegetables and sumac", 14],
+      ["Cheese Rolls (6pcs)", "رول جبنة", "Crispy pastry filled with three cheeses", 16],
+      ["Batata Harra", "بطاطا حارة", "Spiced fried potatoes with garlic and coriander", 13],
+    ],
+    "Shawarma & Grills": [
+      ["Chicken Shawarma Wrap", "شاورما دجاج", "Marinated chicken, garlic sauce, pickles, thin bread", 11],
+      ["Beef Shawarma Plate", "شاورما لحم صحن", "Sliced beef shawarma served with rice and salad", 28],
+      ["Mixed Grill Platter", "مشاوي مشكلة", "Kebab, shish tawook and kofta with grilled vegetables", 54],
+      ["Shish Tawook", "شيش طاووق", "Char-grilled marinated chicken skewers", 32],
+    ],
+    "Burgers": [
+      ["Classic Beef Burger", "برجر لحم كلاسيك", "Angus beef patty, cheddar, lettuce, house sauce", 26],
+      ["Spicy Chicken Burger", "برجر دجاج حار", "Crispy chicken thigh, jalapeños, chipotle mayo", 24],
+      ["Double Smash Burger", "دبل سماش برجر", "Two smashed patties, American cheese, pickles", 32],
+    ],
+    "Salads": [
+      ["Caesar Salad", "سلطة سيزر", "Romaine, parmesan, croutons, Caesar dressing", 18],
+      ["Tabbouleh", "تبولة", "Finely chopped parsley, tomato, bulgur and lemon", 15],
+    ],
+    "Desserts": [
+      ["Knafeh", "كنافة", "Warm cheese pastry soaked in sugar syrup", 19],
+      ["Umm Ali", "أم علي", "Traditional Egyptian bread pudding with nuts and cream", 17],
+      ["Chocolate Lava Cake", "كيك لافا شوكولاتة", "Warm chocolate cake with a molten center", 21],
+    ],
+    "Beverages": [
+      ["Fresh Orange Juice", "عصير برتقال طازج", "Freshly squeezed orange juice", 9],
+      ["Mint Lemonade", "ليمون بالنعناع", "Refreshing lemon juice blended with fresh mint", 10],
+      ["Arabic Coffee", "قهوة عربية", "Traditional cardamom-spiced coffee", 8],
+    ]
+  };
+  const items = [];
+  cats.forEach(c=>{
+    (bank[c.en]||[]).forEach(([en,ar,desc,price])=>{
+      const sizes = Math.random() > 0.6 ? [{name:"Regular", price:price}, {name:"Large", price: round2(price*1.3)}] : [];
+      const addons = Math.random() > 0.55 ? [{name:"Extra Cheese", price:3.5}, {name:"Extra Sauce", price:1.5}] : [];
+      items.push({
+        id: itemIdCounter++,
+        category: c.en + " / " + c.ar,
+        subCategory: "",
+        itemName: en + " / " + ar,
+        description: desc,
+        price: price,
+        currency: "AED",
+        imageUrl: "",
+        available: Math.random() > 0.08,
+        sizes, addons, notes: ""
+      });
+    });
+  });
+  return {
+    restaurant: { name:"Shaghf Cafe / مقهى شغف", country:"uae", city:"Dubai", currency:"AED",
+      sourceUrl:"https://www.talabat.com/uae/restaurant/614992/shaghf-cafe", extractedAt: new Date() },
+    items
+  };
+}
+
+/* =========================================================================
+   PROCESSING PIPELINE / UI STAGES
+   ========================================================================= */
+const STAGES = [
+  "Validating URL", "Detecting restaurant", "Loading menu data", "Extracting categories",
+  "Extracting menu items", "Cleaning data", "Detecting prices", "Detecting variants",
+  "Preparing Excel workbook", "Finalizing export"
+];
+
+function renderStageList(){
+  const ul = $("#stageList");
+  ul.innerHTML = STAGES.map((s,i)=>'<li id="stage-'+i+'"><span class="chk"></span><span>'+escapeHtml(s)+'</span></li>').join("");
+}
+function setStage(i, status){ // status: active | done
+  const li = $("#stage-"+i);
+  if(!li) return;
+  li.classList.remove("active","done");
+  li.classList.add(status);
+  const pct = Math.round(((i + (status==="done"?1:0.5)) / STAGES.length) * 100);
+  $("#progressFill").style.width = pct + "%";
+}
+function wait(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function runStage(i, fn){
+  setStage(i, "active");
+  await wait(180 + Math.random()*220);
+  const result = await fn();
+  setStage(i, "done");
+  return result;
+}
+
+/* Main orchestration entry point */
+async function analyzeUrl(rawUrl){
+  resetErrorAndFallback();
+  showSection("processing");
+  renderStageList();
+  $("#progressFill").style.width = "0%";
+
+  const normalized = await runStage(0, async ()=> normalizeInputUrl(rawUrl));
+  State.debug.normalizedUrl = normalized.normalizedUrl || rawUrl;
+  renderDebug();
+
+  if(!normalized.valid){
+    return handleValidationError(normalized);
+  }
+  showNormalizedNote(normalized);
+
+  await runStage(1, async ()=>{ State.restaurant.country = normalized.country; });
+
+  const fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
+
+  if(!fetchResult.ok){
+    State.debug.extractionMethod = "failed: " + fetchResult.reason;
+    renderDebug();
+    showFallback(["Direct Fetch — blocked (" + fetchResult.reason + ")", "Embedded Page Data — unavailable", "Structured Patterns — unavailable"]);
+    return;
+  }
+
+  // Strategy 2 + 3 combined: parse embedded structured data, then generic pattern search
+  const blobs = await runStage(3, async ()=> extractEmbeddedJsonBlobs(fetchResult.html));
+  const rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
+
+  if(!rawItems.length){
+    State.debug.extractionMethod = "fetch ok, no structured menu data found";
+    renderDebug();
+    showFallback(["Direct Fetch — ok", "Embedded Page Data — no menu structure found", "Structured Patterns — no menu structure found"]);
+    return;
+  }
+
+  State.debug.rawRecordCount = rawItems.length;
+  const meta = inferRestaurantMeta(blobs, normalized);
+  State.restaurant = {
+    name: meta.name || normalized.slug.replace(/-/g," ") || "Unknown Restaurant",
+    country: meta.country, city: meta.city, currency: meta.currency,
+    sourceUrl: normalized.normalizedUrl, extractedAt: new Date()
+  };
+
+  const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
+  await runStage(6, async ()=>{});
+  await runStage(7, async ()=>{});
+  await runStage(8, async ()=>{});
+  await runStage(9, async ()=>{});
+
+  State.debug.normalizedRecordCount = cleaned.items.length;
+  State.debug.duplicateCount = cleaned.duplicates;
+  State.isDemo = false;
+  finalizeDataset(cleaned.items);
+}
+
+function handleValidationError(normalized){
+  showSection("error");
+  if(normalized.error==="empty"){
+    setError("Please paste a URL", "Enter a Talabat restaurant URL (or an Instagram redirect link that contains one) before analyzing.");
+  } else if(normalized.error==="invalid"){
+    setError("That doesn't look like a valid URL", "Double-check the link you pasted — it should start with http:// or https://.");
+  } else if(normalized.error==="not-talabat"){
+    setError("Not a Talabat link", "This tool is built specifically for Talabat restaurant pages. The link you pasted resolved to: " + escapeHtml(normalized.normalizedUrl||"") + " — please paste a talabat.com restaurant URL, or an Instagram-style redirect link that contains one.");
+  } else {
+    setError("Couldn't process that link", "Please check the URL and try again.");
+  }
+}
+
+function showNormalizedNote(normalized){
+  const note = $("#normalizedNote");
+  if(normalized.wasRedirect){
+    note.innerHTML = "Redirect link detected and decoded → <b>" + escapeHtml(normalized.normalizedUrl) + "</b>";
+  } else {
+    note.innerHTML = "Normalized URL → <b>" + escapeHtml(normalized.normalizedUrl) + "</b>";
+  }
+  note.classList.add("show");
+}
+
+/* Fallback UI (Strategy 4) */
+function showFallback(methodResults){
+  showSection("import");
+  $("#fallbackPanel").style.display = "block";
+  $("#methodTags").innerHTML = methodResults.map(m=>{
+    const failed = /blocked|unavailable|no menu/i.test(m);
+    return '<span class="method-tag '+(failed?"failed":"ok")+'">'+escapeHtml(m)+'</span>';
+  }).join("");
+  toastMsg("Direct extraction was blocked by the browser — use the import box below.", "err");
+}
+function resetErrorAndFallback(){
+  $("#fallbackPanel").style.display = "none";
+  $("#errorSection").style.display = "none";
+}
+function setError(title, body){
+  $("#errorTitle").textContent = title;
+  $("#errorBody").innerHTML = body;
+}
+
+/* Process user-pasted HTML/JSON (still Strategy 2/3, run against local content) */
+async function processPastedContent(raw){
+  if(!raw || !raw.trim()){ toastMsg("Paste some HTML or JSON first.", "err"); return; }
+  showSection("processing");
+  renderStageList();
+  for(let i=0;i<3;i++){ setStage(i,"done"); }
+  $("#progressFill").style.width = "30%";
+
+  let blobs = [];
+  const trimmed = raw.trim();
+  if(trimmed.startsWith("{") || trimmed.startsWith("[")){
+    try{ blobs = [JSON.parse(trimmed)]; }
+    catch(e){ blobs = extractEmbeddedJsonBlobs(raw); }
+  } else {
+    blobs = extractEmbeddedJsonBlobs(raw);
+  }
+
+  const rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
+  if(!rawItems.length){
+    showSection("error");
+    setError("No menu data found in the pasted content", "We looked for JSON‑LD, embedded app state, and generic name/price structures but couldn't find anything that looked like a menu. Try pasting the full page source (Ctrl/Cmd+U → Select All → Copy), or use Demo Mode to explore the app.");
+    return;
+  }
+
+  const meta = inferRestaurantMeta(blobs, {country:""});
+  State.restaurant = {
+    name: meta.name || "Imported Restaurant", country: meta.country||"", city: meta.city||"",
+    currency: meta.currency||"", sourceUrl:"(pasted content)", extractedAt: new Date()
+  };
+
+  const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
+  await runStage(6, async ()=>{}); await runStage(7, async ()=>{});
+  await runStage(8, async ()=>{}); await runStage(9, async ()=>{});
+
+  State.debug.rawRecordCount = rawItems.length;
+  State.debug.normalizedRecordCount = cleaned.items.length;
+  State.debug.duplicateCount = cleaned.duplicates;
+  State.debug.extractionMethod = "user-pasted content";
+  State.isDemo = false;
+  finalizeDataset(cleaned.items);
+}
+
+async function loadDemo(){
+  showSection("processing");
+  renderStageList();
+  for(let i=0;i<STAGES.length;i++){ setStage(i, i<STAGES.length-1 ? "active":"active"); await wait(70); setStage(i,"done"); }
+  const demo = buildDemoDataset();
+  State.restaurant = demo.restaurant;
+  State.isDemo = true;
+  State.debug.extractionMethod = "demo dataset";
+  State.debug.rawRecordCount = demo.items.length;
+  State.debug.normalizedRecordCount = demo.items.length;
+  State.debug.duplicateCount = 0;
+  finalizeDataset(demo.items);
+}
+
+function finalizeDataset(items){
+  State.items = items;
+  const catMap = new Map();
+  items.forEach(it=>{ catMap.set(it.category, (catMap.get(it.category)||0)+1); });
+  State.categories = Array.from(catMap.entries()).map(([name,count])=>({name,count}));
+  State.debug.detectedCategories = State.categories.length;
+  State.debug.detectedCurrency = items.find(i=>i.currency)?.currency || "";
+  State.activeCategory = "All Categories";
+  State.searchTerm = "";
+  $("#searchInput").value = "";
+  saveRecentUrl(State.restaurant.sourceUrl);
+  renderDebug();
+  showSection("results");
+  renderResults();
+  toastMsg("Menu ready — " + items.length + " items across " + State.categories.length + " categories.", "ok");
+}
+
+/* =========================================================================
+   SECTION VISIBILITY
+   ========================================================================= */
+function showSection(name){
+  $("#importSection").style.display = name==="import" ? "block" : (name==="processing"||name==="results"||name==="error" ? "none" : "block");
+  $("#processingSection").style.display = name==="processing" ? "block" : "none";
+  $("#resultsSection").classList.toggle("show", name==="results");
+  $("#errorSection").style.display = name==="error" ? "block" : "none";
+  $("#tearDivider").style.display = (name==="processing"||name==="results") ? "flex" : "none";
+  if(name==="import"){ $("#processingSection").style.display="none"; $("#resultsSection").classList.remove("show"); }
+}
+
+/* =========================================================================
+   RESULTS RENDERING
+   ========================================================================= */
+function renderResults(){
+  document.body.setAttribute("dir", containsArabic(State.restaurant.name) ? "auto" : "ltr");
+  $("#restaurantTitle").textContent = State.restaurant.name || "Restaurant";
+  $("#demoBadge").style.display = State.isDemo ? "inline-flex" : "none";
+
+  const totalItems = State.items.length;
+  const withVariants = State.items.filter(i=>i.sizes && i.sizes.length).length;
+  const withAddons = State.items.filter(i=>i.addons && i.addons.length).length;
+  const currency = State.debug.detectedCurrency || "—";
+
+  $("#statGrid").innerHTML = [
+    ["Categories", State.categories.length],
+    ["Menu items", totalItems],
+    ["With sizes", withVariants],
+    ["With add‑ons", withAddons],
+    ["Currency", currency],
+  ].map(([lbl,num])=>'<div class="card stat-card"><div class="num">'+escapeHtml(String(num))+'</div><div class="lbl">'+escapeHtml(lbl)+'</div></div>').join("");
+
+  renderCategoryChips();
+  renderTable();
+  updateFilenamePreview();
+}
+
+function renderCategoryChips(){
+  const all = [{name:"All Categories", count: State.items.length}, ...State.categories];
+  $("#catScroll").innerHTML = all.map(c=>{
+    const active = c.name === State.activeCategory;
+    return '<div class="cat-chip'+(active?" active":"")+'" data-cat="'+escapeHtml(c.name)+'" tabindex="0" role="button">'+
+      '<span class="cname">'+escapeHtml(c.name)+'</span><span class="ccount">'+c.count+' item'+(c.count===1?"":"s")+'</span></div>';
+  }).join("");
+  $all(".cat-chip").forEach(chip=>{
+    chip.addEventListener("click", ()=>{ State.activeCategory = chip.dataset.cat; renderCategoryChips(); renderTable(); });
+    chip.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ chip.click(); } });
+  });
+}
+
+function getFilteredSortedItems(){
+  let list = State.items.slice();
+  if(State.activeCategory !== "All Categories"){
+    list = list.filter(i=>i.category === State.activeCategory);
+  }
+  if(State.searchTerm){
+    const q = State.searchTerm.toLowerCase();
+    list = list.filter(i =>
+      (i.itemName||"").toLowerCase().includes(q) ||
+      (i.description||"").toLowerCase().includes(q) ||
+      (i.category||"").toLowerCase().includes(q)
+    );
+  }
+  switch(State.sortMode){
+    case "name": list.sort((a,b)=> (a.itemName||"").localeCompare(b.itemName||"")); break;
+    case "price-asc": list.sort((a,b)=> (a.price??Infinity) - (b.price??Infinity)); break;
+    case "price-desc": list.sort((a,b)=> (b.price??-Infinity) - (a.price??-Infinity)); break;
+    case "category": list.sort((a,b)=> (a.category||"").localeCompare(b.category||"")); break;
+    default: break; // original order
+  }
+  return list;
+}
+
+function renderTable(){
+  const list = getFilteredSortedItems();
+  const tbody = $("#tableBody");
+  if(!list.length){
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No items match your search or filter.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(item=>{
+    const rtl = containsArabic(item.itemName) || containsArabic(item.description);
+    return '<tr data-id="'+item.id+'">' +
+      '<td><span class="editable" contenteditable="true" data-field="category">'+escapeHtml(item.category)+'</span></td>' +
+      '<td'+(rtl?' class="rtl-content"':'')+'><span class="editable" contenteditable="true" data-field="itemName">'+escapeHtml(item.itemName)+'</span></td>' +
+      '<td class="desc'+(rtl?' rtl-content':'')+'"><span class="editable" contenteditable="true" data-field="description">'+escapeHtml(item.description)+'</span></td>' +
+      '<td class="price"><span class="editable" contenteditable="true" data-field="price">'+(item.price!==null&&item.price!==undefined ? item.price.toFixed(2):"")+'</span></td>' +
+      '<td><span class="editable" contenteditable="true" data-field="currency">'+escapeHtml(item.currency||"")+'</span></td>' +
+      '<td>'+(item.available ? "" : '<span class="badge-unavail">Unavailable</span>')+'</td>' +
+      '<td class="row-actions">' +
+        '<button class="icon-btn" data-action="delete" title="Delete item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>' +
+      '</td></tr>';
+  }).join("");
+
+  tbody.querySelectorAll(".editable").forEach(el=>{
+    el.addEventListener("blur", onCellEdit);
+    el.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); el.blur(); } });
+  });
+  tbody.querySelectorAll('[data-action="delete"]').forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const tr = btn.closest("tr");
+      const id = Number(tr.dataset.id);
+      State.items = State.items.filter(i=>i.id!==id);
+      recomputeCategories();
+      renderResults();
+      toastMsg("Item removed.", "info");
+    });
+  });
+}
+
+function onCellEdit(e){
+  const el = e.target;
+  const tr = el.closest("tr");
+  const id = Number(tr.dataset.id);
+  const field = el.dataset.field;
+  const item = State.items.find(i=>i.id===id);
+  if(!item) return;
+  let val = cleanText(el.textContent);
+  if(field==="price"){
+    const parsed = parsePriceValue(val);
+    item.price = parsed.value;
+    el.textContent = item.price!==null ? item.price.toFixed(2) : "";
+  } else {
+    item[field] = val;
+  }
+  if(field==="category"){ recomputeCategories(); renderCategoryChips(); }
+}
+
+function recomputeCategories(){
+  const catMap = new Map();
+  State.items.forEach(it=>{ catMap.set(it.category, (catMap.get(it.category)||0)+1); });
+  State.categories = Array.from(catMap.entries()).map(([name,count])=>({name,count}));
+  if(State.activeCategory!=="All Categories" && !State.categories.find(c=>c.name===State.activeCategory)){
+    State.activeCategory = "All Categories";
+  }
+}
+
+function addBlankItem(){
+  const item = {
+    id: itemIdCounter++, category: State.activeCategory!=="All Categories" ? State.activeCategory : "Uncategorized",
+    subCategory:"", itemName:"New Item", description:"", price:0, currency: State.debug.detectedCurrency||"",
+    imageUrl:"", available:true, sizes:[], addons:[], notes:""
+  };
+  State.items.unshift(item);
+  recomputeCategories();
+  renderResults();
+  toastMsg("New item added — edit it in the table.", "ok");
+}
+
+/* =========================================================================
+   FILENAME
+   ========================================================================= */
+function sanitizeFilenamePart(str){
+  return String(str||"menu").trim().replace(/[^\w\s-]/g,"").replace(/\s+/g,"_").replace(/_+/g,"_");
+}
+function buildFilename(ext){
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0,10);
+  const base = sanitizeFilenamePart(State.restaurant.name || "Menu");
+  return base + "_Menu_" + dateStr + "." + ext;
+}
+function updateFilenamePreview(){
+  $("#filenamePreview").textContent = buildFilename("xlsx");
+}
+
+/* =========================================================================
+   EXCEL EXPORT
+   ========================================================================= */
+const HEADER_STYLE = {
+  font:{ bold:true, color:{rgb:"FBF7EE"} },
+  fill:{ fgColor:{rgb:"12181F"} },
+  alignment:{ vertical:"center", wrapText:true }
+};
+const TITLE_STYLE = { font:{ bold:true, sz:14, color:{rgb:"12181F"} } };
+const LABEL_STYLE = { font:{ bold:true, color:{rgb:"6B6357"} } };
+const ZEBRA_STYLE = { fill:{ fgColor:{rgb:"FBF7EE"} } };
+
+function buildWorkbook(){
+  const wb = XLSX.utils.book_new();
+  const anyArabic = State.items.some(i=>containsArabic(i.itemName)||containsArabic(i.description)) || containsArabic(State.restaurant.name);
+  wb.Workbook = { Views: [{ RTL: !!anyArabic }] };
+
+  // Sheet 1 — Restaurant
+  const infoRows = [
+    ["Restaurant Information", ""],
+    ["Restaurant Name", State.restaurant.name || ""],
+    ["Country", (State.restaurant.country||"").toUpperCase()],
+    ["City", State.restaurant.city || ""],
+    ["Currency", State.debug.detectedCurrency || State.restaurant.currency || ""],
+    ["Source URL", State.restaurant.sourceUrl || ""],
+    ["Extraction Date", State.restaurant.extractedAt ? State.restaurant.extractedAt.toLocaleDateString() : ""],
+    ["Extraction Time", State.restaurant.extractedAt ? State.restaurant.extractedAt.toLocaleTimeString() : ""],
+    ["Number of Categories", State.categories.length],
+    ["Number of Items", State.items.length],
+  ];
+  const wsInfo = XLSX.utils.aoa_to_sheet(infoRows);
+  wsInfo["!cols"] = [{wch:24},{wch:50}];
+  styleCell(wsInfo,"A1",{font:{bold:true,sz:15,color:{rgb:"12181F"}}});
+  for(let r=1;r<infoRows.length;r++){
+    styleCell(wsInfo, "A"+(r+1), LABEL_STYLE);
+  }
+  XLSX.utils.book_append_sheet(wb, wsInfo, "Restaurant");
+
+  // Sheet 2 — Menu
+  const menuHeader = ["Category","Subcategory","Item Name","Description","Price","Currency","Availability","Image URL","Variants","Add-ons","Notes"];
+  const menuRows = [menuHeader];
+  State.items.forEach(it=>{
+    menuRows.push([
+      it.category||"", it.subCategory||"", it.itemName||"", it.description||"",
+      it.price!==null && it.price!==undefined ? it.price : "",
+      it.currency||"", it.available ? "Available" : "Unavailable", it.imageUrl||"",
+      (it.sizes||[]).map(s=> s.name + (s.price!==null&&s.price!==undefined ? " ("+s.price.toFixed(2)+")" : "")).join(", "),
+      (it.addons||[]).map(a=> a.name + (a.price!==null&&a.price!==undefined ? " ("+a.price.toFixed(2)+")" : "")).join(", "),
+      it.notes||""
+    ]);
+  });
+  const wsMenu = XLSX.utils.aoa_to_sheet(menuRows);
+  wsMenu["!cols"] = [{wch:16},{wch:14},{wch:26},{wch:42},{wch:10},{wch:10},{wch:13},{wch:24},{wch:24},{wch:24},{wch:16}];
+  wsMenu["!autofilter"] = { ref: "A1:K1" };
+  wsMenu["!freeze"] = { xSplit:0, ySplit:1 };
+  wsMenu["!rows"] = menuRows.map((_,i)=> i===0 ? {hpt:26} : {hpt:20});
+  for(let c=0;c<menuHeader.length;c++){ styleCell(wsMenu, XLSX.utils.encode_cell({r:0,c}), HEADER_STYLE); }
+  for(let r=1;r<menuRows.length;r++){
+    const priceCell = XLSX.utils.encode_cell({r,c:4});
+    if(wsMenu[priceCell]) wsMenu[priceCell].z = "0.00";
+    const descCell = XLSX.utils.encode_cell({r,c:3});
+    styleCell(wsMenu, descCell, { alignment:{ wrapText:true, vertical:"top" } });
+    if(r % 2 === 0){
+      for(let c=0;c<menuHeader.length;c++){ styleCell(wsMenu, XLSX.utils.encode_cell({r,c}), ZEBRA_STYLE); }
+    }
+  }
+  XLSX.utils.book_append_sheet(wb, wsMenu, "Menu");
+
+  // Sheet 3 — Categories
+  const catRows = [["Category","Number of Items"], ...State.categories.map(c=>[c.name, c.count])];
+  const wsCats = XLSX.utils.aoa_to_sheet(catRows);
+  wsCats["!cols"] = [{wch:30},{wch:16}];
+  wsCats["!autofilter"] = { ref:"A1:B1" };
+  wsCats["!freeze"] = { xSplit:0, ySplit:1 };
+  for(let c=0;c<2;c++){ styleCell(wsCats, XLSX.utils.encode_cell({r:0,c}), HEADER_STYLE); }
+  XLSX.utils.book_append_sheet(wb, wsCats, "Categories");
+
+  // Sheet 4 — Variants (only if present)
+  const variantRows = [["Item","Category","Variant","Price","Currency"]];
+  State.items.forEach(it=>{
+    (it.sizes||[]).forEach(s=>{
+      variantRows.push([it.itemName, it.category, s.name, s.price ?? "", it.currency||""]);
+    });
+  });
+  if(variantRows.length>1){
+    const wsVar = XLSX.utils.aoa_to_sheet(variantRows);
+    wsVar["!cols"] = [{wch:26},{wch:16},{wch:16},{wch:10},{wch:10}];
+    wsVar["!autofilter"] = { ref:"A1:E1" };
+    wsVar["!freeze"] = { xSplit:0, ySplit:1 };
+    for(let c=0;c<5;c++){ styleCell(wsVar, XLSX.utils.encode_cell({r:0,c}), HEADER_STYLE); }
+    XLSX.utils.book_append_sheet(wb, wsVar, "Variants");
+  }
+
+  // Sheet 5 — Add-ons (only if present)
+  const addonRows = [["Item","Category","Add-on","Price","Currency"]];
+  State.items.forEach(it=>{
+    (it.addons||[]).forEach(a=>{
+      addonRows.push([it.itemName, it.category, a.name, a.price ?? "", it.currency||""]);
+    });
+  });
+  if(addonRows.length>1){
+    const wsAdd = XLSX.utils.aoa_to_sheet(addonRows);
+    wsAdd["!cols"] = [{wch:26},{wch:16},{wch:16},{wch:10},{wch:10}];
+    wsAdd["!autofilter"] = { ref:"A1:E1" };
+    wsAdd["!freeze"] = { xSplit:0, ySplit:1 };
+    for(let c=0;c<5;c++){ styleCell(wsAdd, XLSX.utils.encode_cell({r:0,c}), HEADER_STYLE); }
+    XLSX.utils.book_append_sheet(wb, wsAdd, "Add-ons");
+  }
+
+  return wb;
+}
+function styleCell(ws, addr, style){
+  if(!ws[addr]) ws[addr] = { t:"s", v:"" };
+  ws[addr].s = Object.assign({}, ws[addr].s||{}, style);
+}
+
+function exportXlsx(){
+  if(!State.items.length){ toastMsg("Nothing to export yet.", "err"); return; }
+  try{
+    const wb = buildWorkbook();
+    const fname = buildFilename("xlsx");
+    XLSX.writeFile(wb, fname);
+    toastMsg("Excel file downloaded: " + fname, "ok");
+  }catch(err){
+    console.error(err);
+    toastMsg("Excel export failed — see console for details.", "err");
+  }
+}
+
+function exportCsv(){
+  if(!State.items.length){ toastMsg("Nothing to export yet.", "err"); return; }
+  const header = ["Category","Item Name","Description","Price","Currency","Availability"];
+  const rows = [header, ...State.items.map(it=>[
+    it.category, it.itemName, it.description, it.price ?? "", it.currency||"", it.available?"Available":"Unavailable"
+  ])];
+  const csv = rows.map(r => r.map(csvEscape).join(",")).join("\r\n");
+  downloadBlob(new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"}), buildFilename("csv"));
+  toastMsg("CSV file downloaded.", "ok");
+}
+function csvEscape(v){
+  v = v===null||v===undefined ? "" : String(v);
+  if(/[",\n]/.test(v)) return '"' + v.replace(/"/g,'""') + '"';
+  return v;
+}
+function exportJson(){
+  if(!State.items.length){ toastMsg("Nothing to export yet.", "err"); return; }
+  const payload = { restaurant: State.restaurant, categories: State.categories, items: State.items };
+  downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}), buildFilename("json"));
+  toastMsg("JSON file downloaded.", "ok");
+}
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+
+/* =========================================================================
+   HISTORY (localStorage)
+   ========================================================================= */
+function saveRecentUrl(url){
+  if(!url || url==="(pasted content)") return;
+  try{
+    const list = JSON.parse(localStorage.getItem("menux_recent")||"[]");
+    const filtered = [url, ...list.filter(u=>u!==url)].slice(0,8);
+    localStorage.setItem("menux_recent", JSON.stringify(filtered));
+  }catch(e){}
+}
+function getRecentUrls(){
+  try{ return JSON.parse(localStorage.getItem("menux_recent")||"[]"); }catch(e){ return []; }
+}
+function showRecentMenu(){
+  const list = getRecentUrls();
+  if(!list.length){ toastMsg("No recent URLs saved yet.", "info"); return; }
+  const choice = prompt("Recent URLs (copy one into the field above):\n\n" + list.join("\n"));
+  if(choice) $("#urlInput").value = choice;
+}
+
+/* =========================================================================
+   DEBUG PANEL
+   ========================================================================= */
+function renderDebug(){
+  const d = State.debug;
+  const rows = [
+    ["Normalized URL", d.normalizedUrl || "—"],
+    ["Extraction method", d.extractionMethod || "—"],
+    ["Raw records found", d.rawRecordCount],
+    ["Normalized records", d.normalizedRecordCount],
+    ["Duplicates removed", d.duplicateCount],
+    ["Categories detected", d.detectedCategories],
+    ["Currency detected", d.detectedCurrency || "—"],
+  ];
+  $("#debugContent").innerHTML = rows.map(([k,v])=>
+    '<div class="debug-row"><span>'+escapeHtml(k)+'</span><b>'+escapeHtml(String(v))+'</b></div>'
+  ).join("");
+}
+
+/* =========================================================================
+   EVENT WIRING
+   ========================================================================= */
+function init(){
+  $("#btnAnalyze").addEventListener("click", ()=>{
+    const val = $("#urlInput").value;
+    analyzeUrl(val);
+  });
+  $("#urlInput").addEventListener("keydown", e=>{ if(e.key==="Enter") $("#btnAnalyze").click(); });
+
+  $("#btnDemo").addEventListener("click", loadDemo);
+  $("#btnTryDemoFromFallback").addEventListener("click", loadDemo);
+
+  $("#btnPasteData").addEventListener("click", ()=>{
+    $("#fallbackPanel").style.display = "block";
+    $("#methodTags").innerHTML = '<span class="method-tag ok">Manual import mode</span>';
+    $("#fallbackPanel").scrollIntoView({behavior:"smooth", block:"center"});
+  });
+  $("#btnProcessPaste").addEventListener("click", ()=> processPastedContent($("#pasteArea").value));
+
+  const dz = $("#dropzone");
+  const fileInput = $("#fileInput");
+  dz.addEventListener("click", ()=> fileInput.click());
+  dz.addEventListener("keydown", e=>{ if(e.key==="Enter") fileInput.click(); });
+  ["dragenter","dragover"].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.add("drag"); }));
+  ["dragleave","drop"].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.remove("drag"); }));
+  dz.addEventListener("drop", e=>{
+    const file = e.dataTransfer.files[0];
+    if(file) readDroppedFile(file);
+  });
+  fileInput.addEventListener("change", e=>{
+    const file = e.target.files[0];
+    if(file) readDroppedFile(file);
+  });
+  function readDroppedFile(file){
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      $("#fallbackPanel").style.display = "block";
+      $("#pasteArea").value = reader.result;
+      $("#methodTags").innerHTML = '<span class="method-tag ok">File import: ' + escapeHtml(file.name) + '</span>';
+      processPastedContent(String(reader.result));
+    };
+    reader.onerror = ()=> toastMsg("Couldn't read that file.", "err");
+    reader.readAsText(file);
+  }
+
+  $("#btnStartOver").addEventListener("click", ()=>{
+    showSection("import");
+    $("#normalizedNote").classList.remove("show");
+    $("#fallbackPanel").style.display = "none";
+    $("#urlInput").value = "";
+  });
+  $("#btnErrorBack").addEventListener("click", ()=> showSection("import"));
+
+  $("#searchInput").addEventListener("input", debounce(e=>{ State.searchTerm = e.target.value; renderTable(); }, 180));
+  $("#sortSelect").addEventListener("change", e=>{ State.sortMode = e.target.value; renderTable(); });
+  $("#btnAddItem").addEventListener("click", addBlankItem);
+
+  $("#btnExportXlsx").addEventListener("click", exportXlsx);
+  $("#btnExportCsv").addEventListener("click", exportCsv);
+  $("#btnExportJson").addEventListener("click", exportJson);
+
+  $("#btnHistory").addEventListener("click", showRecentMenu);
+  $("#btnClearHistory").addEventListener("click", ()=>{
+    localStorage.removeItem("menux_recent");
+    toastMsg("History cleared.", "info");
+  });
+
+  $("#btnDebugToggle").addEventListener("click", ()=> $("#debugPanel").classList.toggle("show"));
+
+  renderDebug();
+}
+
+document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+</body>
+</html>
