@@ -678,7 +678,7 @@ function normalizeInputUrl(raw){
    ------------------------------------------------------------------ */
 
 // Hosted reader endpoint (works from a downloaded file too).
-const READER_API = "https://id-preview--85ea9fea-2fd0-4672-a513-7b22fd6357da.lovable.app/api/public/scrape";
+const READER_API = "https://project--85ea9fea-2fd0-4672-a513-7b22fd6357da-dev.lovable.app/api/public/scrape";
 
 function readerBases(){
   const bases = [];
@@ -1335,8 +1335,9 @@ async function analyzeUrl(rawUrl){
     State.debug.extractionMethod = "fetched, no menu data found";
     renderDebug();
     showSection("error");
-    setError("No menu found on that page",
-      "The page was downloaded successfully (via " + escapeHtml(fetchResult.route||"fetch") + "), but no priced menu items were present in its public content. The restaurant may require a location, login, or app session. Try a direct public menu page that displays item names and prices.");
+    const diagnostics = Array.isArray(fetchResult.tried) ? fetchResult.tried.join(" · ") : "No diagnostics available";
+    setError("No priced menu data was returned",
+      "The link was reached, but it did not expose a public priced menu. Fetch diagnostics: " + escapeHtml(diagnostics) + ". Confirm that the link opens the restaurant menu directly (not a search, share, or expired page).");
     return;
   }
   State.debug.extractionMethod = method;
