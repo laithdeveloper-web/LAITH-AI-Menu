@@ -667,14 +667,40 @@ function normalizeInputUrl(raw){
    Strategy 4: user-assisted paste fallback (always available)
    ========================================================================= */
 
-const FETCH_ROUTES = [
-  { label:"direct", build: u => u, timeout:7000 },
-  // Jina Reader is the primary no-key fallback. It returns a readable Markdown
-  // representation and works from a standalone browser without exposing secrets.
-  { label:"reader", build: u => "https://r.jina.ai/" + u, timeout:20000 },
-  { label:"allorigins", build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u), timeout:12000 },
-  { label:"codetabs", build: u => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u), timeout:12000 }
-];
+/* ------------------------------------------------------------------
+   FETCH LAYER (root fix)
+   Browsers cannot fetch menu pages directly: every delivery site blocks
+   cross-origin reads (CORS), and Talabat additionally bounces a visitor
+   with no delivery area back to its country home page. So the primary
+   route is a server-side reader endpoint that sends real browser headers
+   and retries the link with an area id (?aid=) until the priced menu
+   payload is actually present. Public relays stay as extra fallbacks.
+   ------------------------------------------------------------------ */
+
+// Hosted reader endpoint (works from a downloaded file too).
+const READER_API = "https://id-preview--85ea9fea-2fd0-4672-a513-7b22fd6357da.lovable.app/api/public/scrape";
+
+function readerBases(){
+  const bases = [];
+  try{
+    if(location.protocol === "http:" || location.protocol === "https:"){
+      bases.push(location.origin + "/api/public/scrape");
+    }
+  }catch(e){}
+  if(bases.indexOf(READER_API) === -1) bases.push(READER_API);
+  return bases;
+}
+
+const FETCH_ROUTES = readerBases().map((base, i) => ({
+  label: i === 0 ? "reader" : "reader-cloud",
+  build: u => base + "?url=" + encodeURIComponent(u),
+  timeout: 45000
+})).concat([
+  { label:"jina", build: u => "https://r.jina.ai/" + u, timeout:25000 },
+  { label:"allorigins", build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u), timeout:15000 },
+  { label:"codetabs", build: u => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u), timeout:15000 },
+  { label:"direct", build: u => u, timeout:8000 }
+]);
 
 async function fetchOnce(target, ms){
   const controller = new AbortController();
@@ -682,8 +708,16 @@ async function fetchOnce(target, ms){
   try{
     const res = await fetch(target, { signal: controller.signal, redirect:"follow" });
     clearTimeout(timeout);
-    if(!res.ok) return { ok:false, reason:"http-"+res.status };
     let text = await res.text();
+    // Our reader endpoint answers with a JSON envelope.
+    if(/^\s*\{/.test(text) && /"html"\s*:/.test(text.slice(0,200))){
+      try{
+        const j = JSON.parse(text);
+        if(j && j.ok && typeof j.html === "string"){ return { ok:true, html:j.html, finalUrl:j.finalUrl||"" }; }
+        if(j && j.error) return { ok:false, reason:String(j.error) };
+      }catch(e){}
+    }
+    if(!res.ok) return { ok:false, reason:"http-"+res.status };
     if(!text || text.length < 40) return { ok:false, reason:"empty-response" };
     // allorigins /get wraps the payload in JSON
     if(/^\s*\{/.test(text) && /"contents"\s*:/.test(text.slice(0,400))){
@@ -696,14 +730,29 @@ async function fetchOnce(target, ms){
   }
 }
 
-/* Try the link directly, then through public read-only relays so any site can be pulled. */
+/* Try every route in order and keep the first payload that actually
+   contains priced menu content; otherwise keep the largest payload. */
+function payloadHasMenu(html){
+  if(!html) return false;
+  if(/"items"\s*:\s*\[\s*\{[\s\S]{0,4000}?"price"/.test(html)) return true;
+  if(/"(menuData|menuItems|menuSections|initialMenuState)"/.test(html) && /"price"\s*:/.test(html)) return true;
+  // Readable-text routes (jina): "Name ... 12.50"
+  const priceLines = (html.match(/\d+[.,]\d{1,2}/g) || []).length;
+  return priceLines > 12;
+}
+
 async function attemptDirectFetch(url){
   const tried = [];
+  let best = null;
   for(const route of FETCH_ROUTES){
     const r = await fetchOnce(route.build(url), route.timeout || 12000);
-    tried.push(route.label + ":" + (r.ok ? "ok" : r.reason));
-    if(r.ok){ r.route = route.label; r.tried = tried; return r; }
+    tried.push(route.label + ":" + (r.ok ? (r.html.length + "b") : r.reason));
+    if(r.ok){
+      if(payloadHasMenu(r.html)){ r.route = route.label; r.tried = tried; return r; }
+      if(!best || r.html.length > best.html.length){ best = r; best.route = route.label; }
+    }
   }
+  if(best){ best.tried = tried; return best; }
   return { ok:false, reason: tried.join(" | "), tried };
 }
 
@@ -1299,6 +1348,17 @@ async function analyzeUrl(rawUrl){
     country: meta.country, city: meta.city, currency: meta.currency,
     sourceUrl: normalized.normalizedUrl, extractedAt: new Date()
   };
+
+  // Drop noise rows: the restaurant/brand name itself sometimes leaks in as a
+  // priceless "item" from page headers.
+  const restName = (State.restaurant.name||"").trim().toLowerCase();
+  rawItems = rawItems.filter(it=>{
+    const nm = String((it && (it.name||it.title||it.itemName)) || "").trim().toLowerCase();
+    const pr = Number(it && (it.price ?? it.itemPrice ?? it.amount));
+    if(!nm) return false;
+    if(nm === restName && (!pr || pr <= 0)) return false;
+    return true;
+  });
 
   const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
   await runStage(6, async ()=>{});
