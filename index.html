@@ -212,6 +212,20 @@ main{padding:48px 0 90px;}
 /* ---------- Results dashboard ---------- */
 .results{display:none;}
 .results.show{display:block;}
+
+/* Compact results: hide data display, keep only export buttons */
+.results.compact .stat-grid,
+.results.compact .card .panel-head,
+.results.compact .cat-scroll,
+.results.compact .toolbar,
+.results.compact .table-scroll{display:none;}
+.results.compact .card{padding:0; background:transparent; border:none; box-shadow:none;}
+.results.compact .export-bar{margin-top:18px; border:none; padding:0;}
+.results.compact .export-bar .filename{display:none;}
+.results.compact .export-bar .export-actions{margin-left:0; width:100%; justify-content:stretch; flex-wrap:wrap; gap:10px;}
+.results.compact .export-actions .btn{flex:1 1 160px; padding:14px 18px; font-size:15px;}
+.results.compact .demo-badge{margin-bottom:10px;}
+
 .stat-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:22px;}
 .stat-card{padding:16px 18px;}
 .stat-card .num{font-family:var(--font-display); font-size:26px; font-weight:600; color:var(--ink-text);}
@@ -351,17 +365,17 @@ footer.site{padding:30px 0; text-align:center; color:var(--muted-2); font-size:1
       <div class="hero-head">
         <p class="eyebrow">Talabat → Excel converter</p>
         <h2>Import Restaurant Menu</h2>
-        <p class="lead">Paste a Talabat restaurant URL and automatically organize its menu into a professional Excel spreadsheet — categories, prices, sizes and add‑ons, cleaned and ready to use.</p>
+        <p class="lead">Paste any restaurant menu link and automatically organize its menu into a professional Excel spreadsheet — categories, prices, sizes and add‑ons, cleaned and ready to use.</p>
       </div>
 
       <div class="card import-card">
         <h3>Analyze a menu</h3>
-        <p class="sub">Works with normal Talabat links and redirect links (e.g. shared from Instagram).</p>
+        <p class="sub">Paste any menu link — Talabat, Deliveroo, Jahez, HungerStation, Instagram redirects or a restaurant's own site. The link is all we need.</p>
 
         <div class="url-row">
           <label class="url-field" for="urlInput">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg>
-            <input id="urlInput" type="text" inputmode="url" autocomplete="off" placeholder="https://www.talabat.com/uae/restaurant/614992/shaghf-cafe" aria-label="Talabat restaurant URL">
+            <input id="urlInput" type="text" inputmode="url" autocomplete="off" placeholder="https://www.talabat.com/uae/restaurant/614992/shaghf-cafe" aria-label="Menu page URL">
           </label>
           <button class="btn btn-primary" id="btnAnalyze" type="button">Analyze Menu</button>
         </div>
@@ -369,28 +383,12 @@ footer.site{padding:30px 0; text-align:center; color:var(--muted-2); font-size:1
         <div class="import-meta">
           <span class="or">or</span>
           <button class="btn btn-ghost btn-sm" id="btnDemo" type="button">Try Demo</button>
-          <button class="btn btn-ghost btn-sm" id="btnPasteData" type="button">Import HTML / JSON</button>
         </div>
 
         <div class="normalized-note" id="normalizedNote"></div>
 
-        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Drop an HTML or JSON export here, or click to browse">
-          Drag a saved page (.html) or menu export (.json) here — or click to browse
-          <input type="file" id="fileInput" accept=".html,.htm,.json,.txt" style="display:none">
-        </div>
       </div>
 
-      <!-- Fallback / user-assisted extraction panel -->
-      <div class="card fallback-panel" id="fallbackPanel" style="display:none;">
-        <h4>⚠️ Direct browser extraction is restricted for this website</h4>
-        <p>Your browser blocked direct access to this page because of cross‑origin (CORS) security restrictions enforced by the site — this is a browser protection, not an application bug. The app cannot pretend the fetch worked, so nothing was invented. Use the supported import method below instead: open the restaurant page, choose <b>"View Page Source"</b> (or save the page), then paste the HTML — or paste a JSON export if you have one.</p>
-        <div class="method-tags" id="methodTags"></div>
-        <textarea id="pasteArea" placeholder="Paste the page HTML or a JSON menu export here…"></textarea>
-        <div class="fallback-actions">
-          <button class="btn btn-teal btn-sm" id="btnProcessPaste" type="button">Process Pasted Data</button>
-          <button class="btn btn-ghost btn-sm" id="btnTryDemoFromFallback" type="button">Use Demo Data Instead</button>
-        </div>
-      </div>
     </section>
 
     <div class="tear" id="tearDivider" style="display:none;">
@@ -410,7 +408,7 @@ footer.site{padding:30px 0; text-align:center; color:var(--muted-2); font-size:1
     </section>
 
     <!-- ============ RESULTS ============ -->
-    <section class="results" id="resultsSection">
+    <section class="results compact" id="resultsSection">
       <div class="panel-head">
         <div>
           <p class="eyebrow" style="margin-bottom:6px;">Step 2 — Review</p>
@@ -636,19 +634,13 @@ function normalizeInputUrl(raw){
     }
   }catch(e){ /* not a valid absolute URL yet, continue with raw string */ }
 
-  // If still not a full URL, but looks like a talabat path, prefix scheme.
+  // Any link is accepted: if the scheme is missing but it looks like a domain, add https://
   if(!/^https?:\/\//i.test(s)){
-    if(/talabat\.com/i.test(s)) s = "https://" + s.replace(/^\/*/,"");
+    if(/^[\w-]+(\.[\w-]+)+/.test(s.replace(/^\/*/,""))) s = "https://" + s.replace(/^\/*/,"");
   }
 
   let parsed;
   try{ parsed = new URL(s); }catch(e){ out.error = "invalid"; return out; }
-
-  if(!/talabat\.com$/i.test(parsed.hostname.replace(/^www\./,"")) ){
-    out.error = "not-talabat";
-    out.normalizedUrl = parsed.href;
-    return out;
-  }
 
   // Expected path: /{country}/restaurant/{id}/{slug}
   const segs = parsed.pathname.split("/").filter(Boolean);
@@ -661,7 +653,7 @@ function normalizeInputUrl(raw){
     out.country = segs[0] || "";
   }
 
-  parsed.search = ""; parsed.hash = "";
+  parsed.hash = "";
   out.normalizedUrl = parsed.href;
   out.valid = true;
   return out;
@@ -675,146 +667,401 @@ function normalizeInputUrl(raw){
    Strategy 4: user-assisted paste fallback (always available)
    ========================================================================= */
 
-async function attemptDirectFetch(url){
+const FETCH_ROUTES = [
+  { label:"direct", build: u => u, timeout:7000 },
+  // Jina Reader is the primary no-key fallback. It returns a readable Markdown
+  // representation and works from a standalone browser without exposing secrets.
+  { label:"reader", build: u => "https://r.jina.ai/" + u, timeout:20000 },
+  { label:"allorigins", build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u), timeout:12000 },
+  { label:"codetabs", build: u => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u), timeout:12000 }
+];
+
+async function fetchOnce(target, ms){
   const controller = new AbortController();
-  const timeout = setTimeout(()=>controller.abort(), 9000);
+  const timeout = setTimeout(()=>controller.abort(), ms||15000);
   try{
-    const res = await fetch(url, { mode:"cors", signal: controller.signal });
+    const res = await fetch(target, { signal: controller.signal, redirect:"follow" });
     clearTimeout(timeout);
     if(!res.ok) return { ok:false, reason:"http-"+res.status };
-    const text = await res.text();
+    let text = await res.text();
+    if(!text || text.length < 40) return { ok:false, reason:"empty-response" };
+    // allorigins /get wraps the payload in JSON
+    if(/^\s*\{/.test(text) && /"contents"\s*:/.test(text.slice(0,400))){
+      try{ const j = JSON.parse(text); if(j && typeof j.contents === "string") text = j.contents; }catch(e){}
+    }
     return { ok:true, html:text };
   }catch(err){
     clearTimeout(timeout);
-    return { ok:false, reason: (err && err.name==="AbortError") ? "timeout" : "cors-or-network" };
+    return { ok:false, reason: (err && err.name==="AbortError") ? "timeout" : "blocked" };
   }
 }
 
-/* Search a parsed HTML document (or raw string) for embedded JSON blobs. */
+/* Try the link directly, then through public read-only relays so any site can be pulled. */
+async function attemptDirectFetch(url){
+  const tried = [];
+  for(const route of FETCH_ROUTES){
+    const r = await fetchOnce(route.build(url), route.timeout || 12000);
+    tried.push(route.label + ":" + (r.ok ? "ok" : r.reason));
+    if(r.ok){ r.route = route.label; r.tried = tried; return r; }
+  }
+  return { ok:false, reason: tried.join(" | "), tried };
+}
+
+/* Search a parsed HTML document (or raw string) for embedded JSON blobs.
+   Handles: JSON-LD, __NEXT_DATA__, legacy window state blobs, generic
+   application/json script payloads, and Next.js App Router
+   streaming chunks (self.__next_f.push([...])) which is what Talabat and
+   most modern menu sites ship today. */
+function safeJsonParse(txt){
+  if(!txt) return null;
+  try{ return JSON.parse(txt); }catch(e){ return null; }
+}
+
+/* Pull balanced {...} or [...] JSON substrings out of arbitrary text. */
+function scanBalancedJson(text, mustMatch, limit){
+  const out = [];
+  if(!text) return out;
+  const opens = ["{","["];
+  for(let i=0;i<text.length && out.length<(limit||40);i++){
+    const ch = text[i];
+    if(opens.indexOf(ch)===-1) continue;
+    const close = ch==="{" ? "}" : "]";
+    let depth=0, inStr=false, esc=false, endIdx=-1;
+    for(let j=i;j<text.length && j-i<4000000;j++){
+      const c = text[j];
+      if(inStr){
+        if(esc){ esc=false; }
+        else if(c==="\\") esc=true;
+        else if(c==='"') inStr=false;
+        continue;
+      }
+      if(c==='"'){ inStr=true; continue; }
+      if(c===ch) depth++;
+      else if(c===close){ depth--; if(depth===0){ endIdx=j; break; } }
+    }
+    if(endIdx>-1){
+      const chunk = text.slice(i, endIdx+1);
+      if(chunk.length>80 && (!mustMatch || mustMatch.test(chunk))){
+        const parsed = safeJsonParse(chunk);
+        if(parsed) out.push(parsed);
+      }
+      i = endIdx;
+    }
+  }
+  return out;
+}
+
 function extractEmbeddedJsonBlobs(source){
   const blobs = [];
   let doc;
   try{ doc = new DOMParser().parseFromString(source, "text/html"); }catch(e){ doc = null; }
 
+  const seenBlobs = new Set();
+  const push = v => {
+    if(!v || typeof v !== "object") return;
+    let sig;
+    try{ const j = JSON.stringify(v); sig = j.length + "|" + j.slice(0,300) + "|" + j.slice(-120); }
+    catch(e){ sig = null; }
+    if(sig){ if(seenBlobs.has(sig)) return; seenBlobs.add(sig); }
+    blobs.push(v);
+  };
+
+  // A pasted/fetched endpoint may itself be JSON rather than an HTML page.
+  push(safeJsonParse(String(source || "").trim()));
+
   if(doc){
     // JSON-LD
     doc.querySelectorAll('script[type="application/ld+json"]').forEach(s=>{
-      try{ blobs.push(JSON.parse(s.textContent)); }catch(e){}
+      push(safeJsonParse(s.textContent));
     });
-    // Common app-state script tags
+    // id="__NEXT_DATA__" (Talabat pages router)
+    const nd = doc.querySelector('script#__NEXT_DATA__');
+    if(nd) push(safeJsonParse(nd.textContent));
+
+    // Any generic JSON script payload (Next/Nuxt/Remix embed menus here)
+    doc.querySelectorAll('script[type="application/json"]').forEach(s=>{
+      push(safeJsonParse(s.textContent));
+    });
+
+    // Nuxt / Remix / legacy window state assignments
     doc.querySelectorAll('script').forEach(s=>{
       const txt = s.textContent || "";
-      if(/__NEXT_DATA__|__INITIAL_STATE__|__APOLLO_STATE__|window\.__DATA__/.test(txt)){
-        const m = txt.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/) || txt.match(/=\s*(\{[\s\S]*\})\s*<\/script>/);
-        if(m){
-          try{ blobs.push(JSON.parse(m[1])); }catch(e){}
-        }
+      if(!txt) return;
+      if(/__NEXT_DATA__|__INITIAL_STATE__|__APOLLO_STATE__|__PRELOADED_STATE__|__NUXT__|__remixContext|window\.__DATA__|initialMenuState|menuData/.test(txt)){
+        const m = txt.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/);
+        const direct = m ? safeJsonParse(m[1]) : null;
+        if(direct) push(direct);
+        else scanBalancedJson(txt, /"(items|menuItems|sections|menuSections|categories|menuCategories|price)"/, 25).forEach(push);
       }
     });
-    // id="__NEXT_DATA__"
-    const nd = doc.querySelector('script#__NEXT_DATA__');
-    if(nd){ try{ blobs.push(JSON.parse(nd.textContent)); }catch(e){} }
+
+    // Next.js App Router streaming payload: self.__next_f.push([1,"...."])
+    let flight = "";
+    doc.querySelectorAll('script').forEach(s=>{
+      const txt = s.textContent || "";
+      if(txt.indexOf("__next_f.push") === -1) return;
+      const re = /self\.__next_f\.push\(\s*\[\s*\d+\s*,\s*("(?:[^"\\]|\\.)*")\s*\]\s*\)/g;
+      let m;
+      while((m = re.exec(txt))){
+        const decoded = safeJsonParse(m[1]);
+        if(typeof decoded === "string") flight += decoded;
+      }
+    });
+    if(flight){
+      scanBalancedJson(flight, /"(menuSections|menuItems|sections|categories|items)"\s*:/, 60).forEach(push);
+    }
   }
 
-  // As a last resort, scan the raw string for large {...} JSON objects containing "price"
-  if(blobs.length===0){
-    const re = /\{[^{}]{0,2}"[a-zA-Z_]*[Pp]rice"[\s\S]{0,20000}?\}/g;
-    let match; let tries=0;
-    while((match = re.exec(source)) && tries<25){
-      tries++;
-      try{ blobs.push(JSON.parse(match[0])); }catch(e){ /* ignore fragments that don't parse */ }
+  // Last resort: scan the raw markup for menu-shaped JSON
+  if(!blobs.length){
+    scanBalancedJson(source, /"(menuSections|menuItems|sections|categories|items)"\s*:/, 40).forEach(push);
+    if(!blobs.length){
+      const re = /\{[^{}]{0,2}"[a-zA-Z_]*[Pp]rice"[\s\S]{0,20000}?\}/g;
+      let match, tries=0;
+      while((match = re.exec(source)) && tries<25){ tries++; push(safeJsonParse(match[0])); }
     }
   }
   return blobs;
 }
 
-/* Recursively search an arbitrary JSON structure for arrays of menu-item-like objects. */
-function findMenuCandidates(node, path, results, depth){
-  depth = depth || 0;
-  if(depth > 12 || node===null || node===undefined) return;
-  if(Array.isArray(node)){
-    if(node.length && node.every(el => el && typeof el==="object" && looksLikeMenuItem(el))){
-      results.push(node);
-    } else {
-      node.forEach(child => findMenuCandidates(child, path, results, depth+1));
+/* Visible-DOM fallback: pair item names with nearby prices on any menu page. */
+function extractItemsFromDom(source){
+  let doc;
+  try{ doc = new DOMParser().parseFromString(source, "text/html"); }catch(e){ return []; }
+  if(!doc || !doc.body) return [];
+  doc.querySelectorAll("script,style,noscript,svg,header,footer,nav").forEach(n=>n.remove());
+
+  const priceRe = /(?:^|\s)(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623|\$|\u20ac|\u00a3)?\s*\d{1,4}(?:[.,]\d{1,3})?\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623)?(?:$|\s)/i;
+  const items = [];
+  const seen = new Set();
+  let currentCategory = "";
+
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT, null);
+  const nodes = [];
+  while(walker.nextNode()) nodes.push(walker.currentNode);
+
+  nodes.forEach(el=>{
+    const tag = el.tagName.toLowerCase();
+    const attrHint = ((el.className && typeof el.className === "string" ? el.className : "") + " " +
+      (el.getAttribute("data-testid")||"") + " " + (el.id||"")).toLowerCase();
+    const isHeadingLike = /^h[1-5]$/.test(tag) || el.getAttribute("role")==="heading" ||
+      /(section|category|menu)[-_]?(title|name|header|heading)/.test(attrHint);
+    if(isHeadingLike){
+      const t = cleanText(el.textContent||"");
+      if(t && t.length < 70 && !priceRe.test(t) && el.children.length <= 2) currentCategory = t;
+      return;
     }
-  } else if(typeof node === "object"){
-    Object.keys(node).forEach(key=>{
-      findMenuCandidates(node[key], path ? path+"."+key : key, results, depth+1);
-    });
-  }
+    if(el.children.length > 6) return;
+    const text = cleanText(el.textContent || "");
+    if(!text || text.length > 220) return;
+    const m = text.match(/(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623|\$|\u20ac|\u00a3)\s*\d{1,5}(?:[.,]\d{1,3})?|\d{1,5}(?:[.,]\d{1,3})?\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623)/i);
+    if(!m) return;
+    const priceRaw = m[0];
+    let name = cleanText(text.replace(priceRaw, " "));
+    let description = "";
+    if(name.length > 70){
+      const parts = name.split(/[\u2022|\-\u2013]|\.\s/);
+      name = cleanText(parts[0]).slice(0,70);
+      description = cleanText(parts.slice(1).join(" "));
+    }
+    if(!name || name.length < 2) return;
+    const key = (name + "|" + priceRaw).toLowerCase();
+    if(seen.has(key)) return;
+    seen.add(key);
+    items.push({ name, price: priceRaw, description, category: currentCategory || "Uncategorized" });
+  });
+
+  // Drop nested duplicates: keep the shortest representation of each name
+  const byName = new Map();
+  items.forEach(it=>{
+    const k = it.name.toLowerCase();
+    if(!byName.has(k)) byName.set(k, it);
+  });
+  return Array.from(byName.values()).slice(0, 1500);
 }
+
+
+/* Reader services return Markdown/plain text rather than HTML. Parse common
+   menu rows such as “Latte — AED 18”, bullets, and Markdown tables. */
+function extractItemsFromText(source){
+  const lines = String(source || "").replace(/\r/g, "").split("\n");
+  const currencyToken = "AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|EUR|GBP|د\\.إ|ر\\.س|د\\.ك|ج\\.م|د\\.أ|€|£|\\$";
+  const priceAtEnd = new RegExp("(?:^|[|–—:\\-\\s])(" + currencyToken + ")?\\s*(\\d{1,5}(?:[.,]\\d{1,3})?)\\s*(" + currencyToken + ")?\\s*$", "i");
+  const headingRe = /^#{1,5}\s+(.{2,80})$/;
+  const skipRe = /^(title|url source|published time|markdown content|image|menu|home|contact|privacy|terms|copyright)\s*:/i;
+  const out = [], seen = new Set();
+  let category = "Uncategorized";
+
+  for(let raw of lines){
+    raw = cleanText(raw.replace(/^[-*+]\s+/, "").replace(/^>\s*/, ""));
+    if(!raw || skipRe.test(raw)) continue;
+    const heading = raw.match(headingRe);
+    if(heading){ category = cleanText(heading[1].replace(/[*_`]/g, "")) || category; continue; }
+    if(/^\|?\s*:?-{3,}/.test(raw)) continue;
+    const match = raw.match(priceAtEnd);
+    if(!match || (!match[1] && !match[3])) continue; // require an explicit currency
+    const priceText = [match[1] || "", match[2], match[3] || ""].join(" ").trim();
+    let before = cleanText(raw.slice(0, match.index).replace(/^[|\s]+|[|–—:\-\s]+$/g, "").replace(/[*_`]/g, ""));
+    const cells = before.split("|").map(cleanText).filter(Boolean);
+    if(cells.length) before = cells[0];
+    let name = before, description = "";
+    const divider = before.match(/\s(?:—|–|\|| - )\s/);
+    if(divider){ name = cleanText(before.slice(0, divider.index)); description = cleanText(before.slice((divider.index || 0) + divider[0].length)); }
+    if(!name || name.length < 2 || name.length > 120) continue;
+    const key = (category + "|" + name + "|" + priceText).toLowerCase();
+    if(seen.has(key)) continue; seen.add(key);
+    out.push({ name, description, category, price:priceText });
+  }
+  return out.slice(0,1500);
+}
+
+/* =========================================================================
+   CATEGORY-AWARE MENU EXTRACTION
+   Menus are almost always nested as: section { name, items:[...] }.
+   The old extractor collected item arrays but threw away the section they
+   came from, so every row landed in "Uncategorized". The walker below keeps
+   the section name in scope while descending, and also resolves categories
+   referenced by id (sectionId / categoryId / menuSectionId).
+   ========================================================================= */
+
+const ITEM_CONTAINER_KEYS = ["items","menuitems","products","dishes","sectionitems","subitems","choices","entries","menuproducts","itemslist"];
+const SECTION_NAME_KEYS = ["name","title","sectionname","categoryname","namesingular","label","nameen","name_en"];
+const SECTION_LIST_KEYS = ["sections","menusections","categories","menucategories","menus","groups","sectionlist","categorylist"];
+
 function looksLikeMenuItem(obj){
+  if(!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
   const keys = Object.keys(obj).map(k=>k.toLowerCase());
-  const hasName = keys.some(k => ["name","title","itemname","productname"].includes(k));
-  const hasPrice = keys.some(k => ["price","amount","cost","unitprice"].includes(k));
-  return hasName && hasPrice;
+  const hasName = keys.some(k => ["name","title","itemname","productname","nameen","name_en"].includes(k));
+  const hasPrice = keys.some(k => ["price","amount","cost","unitprice","finalprice","baseprice","displayprice","pricerange"].includes(k));
+  const isSection = SECTION_LIST_KEYS.concat(ITEM_CONTAINER_KEYS).some(k => Array.isArray(obj[k]) || Array.isArray(obj[k.replace(/s$/,"")]));
+  const nameVal = pick(obj, ["name","title","itemName","productName"]);
+  if(typeof nameVal !== "string" && typeof nameVal !== "object" && typeof nameVal !== "number") return false;
+  return hasName && hasPrice && !isSection;
+}
+
+/* Build id -> category-name lookup for menus that reference sections by id. */
+function buildCategoryIndex(node, map, depth, seen){
+  depth = depth||0;
+  if(depth>14 || !node || typeof node !== "object") return;
+  if(seen.has(node)) return; seen.add(node);
+  if(Array.isArray(node)){ node.forEach(c=>buildCategoryIndex(c, map, depth+1, seen)); return; }
+  const name = readName(pick(node, SECTION_NAME_KEYS));
+  const hasItems = ITEM_CONTAINER_KEYS.some(k => Array.isArray(node[k])) ||
+    Object.keys(node).some(k => ITEM_CONTAINER_KEYS.includes(k.toLowerCase()) && Array.isArray(node[k]));
+  const id = pick(node, ["id","sectionId","categoryId","menuSectionId","uid","_id"]);
+  if(name && hasItems && (id!==undefined && id!==null)) map.set(String(id), name);
+  Object.values(node).forEach(v=>buildCategoryIndex(v, map, depth+1, seen));
+}
+
+/* Names can be plain strings or localized objects {en:"", ar:""}. */
+function readName(v){
+  if(v===null||v===undefined) return "";
+  if(typeof v === "string" || typeof v === "number") return cleanText(v);
+  if(typeof v === "object"){
+    const cand = v.en || v.english || v.default || v.value || v.text || v.ar || v.arabic;
+    if(typeof cand === "string") return cleanText(cand);
+    const first = Object.values(v).find(x=>typeof x==="string" && x.trim());
+    return first ? cleanText(first) : "";
+  }
+  return "";
+}
+
+function walkForMenuItems(node, category, out, depth, seen, catIndex){
+  depth = depth||0;
+  if(depth>16 || node===null || node===undefined || typeof node !== "object") return;
+  if(seen.has(node)) return; seen.add(node);
+
+  if(Array.isArray(node)){
+    node.forEach(c=>walkForMenuItems(c, category, out, depth+1, seen, catIndex));
+    return;
+  }
+
+  if(looksLikeMenuItem(node)){
+    const mapped = mapRawItem(node, category, catIndex);
+    if(mapped) out.push(mapped);
+    return;
+  }
+
+  const selfName = readName(pick(node, SECTION_NAME_KEYS));
+  Object.keys(node).forEach(k=>{
+    const kl = k.toLowerCase();
+    let childCat = category;
+    if(ITEM_CONTAINER_KEYS.includes(kl) && selfName) childCat = selfName;
+    walkForMenuItems(node[k], childCat, out, depth+1, seen, catIndex);
+  });
 }
 
 function pick(obj, candidates){
+  if(!obj || typeof obj !== "object") return undefined;
   for(const c of candidates){
     if(obj[c]!==undefined && obj[c]!==null && obj[c]!=="") return obj[c];
-    // case-insensitive fallback
-    const key = Object.keys(obj).find(k=>k.toLowerCase()===c.toLowerCase());
+    const key = Object.keys(obj).find(k=>k.toLowerCase()===String(c).toLowerCase());
     if(key && obj[key]!==undefined && obj[key]!==null && obj[key]!=="") return obj[key];
   }
   return undefined;
 }
 
 /* Map an arbitrary raw record onto our normalized data model. */
-function mapRawItem(raw, fallbackCategory){
-  const name = cleanText(pick(raw, ["name","title","itemName","productName","nameEn","en_name"]));
-  const desc = cleanText(pick(raw, ["description","desc","details","summary"]) || "");
-  const priceRaw = pick(raw, ["price","amount","cost","unitPrice","finalPrice"]);
+function mapRawItem(raw, fallbackCategory, catIndex){
+  const name = readName(pick(raw, ["name","title","itemName","productName","nameEn","name_en","en_name"]));
+  const desc = readName(pick(raw, ["description","desc","details","summary","descriptionEn"]) || "");
+  let priceRaw = pick(raw, ["price","amount","cost","unitPrice","finalPrice","basePrice","displayPrice","discountedPrice"]);
+  if(priceRaw && typeof priceRaw === "object"){
+    priceRaw = pick(priceRaw, ["value","amount","price","total","formatted","text"]) ?? "";
+  }
   const { value: price, currency: parsedCurrency } = parsePriceValue(priceRaw);
-  const currency = cleanText(pick(raw, ["currency","currencyCode","curr"]) || parsedCurrency || "");
-  const category = cleanText(pick(raw, ["category","categoryName","section","group"]) || fallbackCategory || "Uncategorized");
-  const image = pick(raw, ["image","imageUrl","img","photo","thumbnail","picture"]) || "";
+  const currency = readName(pick(raw, ["currency","currencyCode","curr"])) || parsedCurrency || "";
+
+  let category = readName(pick(raw, ["category","categoryName","sectionName","menuSectionName","section","group","groupName"]));
+  if(!category && catIndex){
+    const ref = pick(raw, ["sectionId","categoryId","menuSectionId","categoryID","sectionID"]);
+    if(ref!==undefined && ref!==null && catIndex.has(String(ref))) category = catIndex.get(String(ref));
+  }
+  if(!category) category = cleanText(fallbackCategory || "");
+  if(!category) category = "Uncategorized";
+
+  let image = pick(raw, ["image","imageUrl","img","photo","thumbnail","picture","imagePath"]) || "";
+  if(image && typeof image === "object") image = pick(image, ["url","src","path"]) || "";
   const available = pick(raw, ["available","isAvailable","inStock"]);
-  const sizesRaw = pick(raw, ["sizes","variants","options"]) || [];
-  const addonsRaw = pick(raw, ["addons","addOns","modifiers","extras"]) || [];
+  const sizesRaw = pick(raw, ["sizes","variants","options","choices"]) || [];
+  const addonsRaw = pick(raw, ["addons","addOns","modifiers","extras","toppings"]) || [];
 
-  const sizes = Array.isArray(sizesRaw) ? sizesRaw.map(v=>{
+  const toOptionList = (src)=> Array.isArray(src) ? src.map(v=>{
     if(typeof v === "string") return { name:cleanText(v), price:null };
-    const p = parsePriceValue(pick(v,["price","amount"]));
-    return { name: cleanText(pick(v,["name","title","label"]) || ""), price: p.value };
-  }).filter(v=>v.name) : [];
-
-  const addons = Array.isArray(addonsRaw) ? addonsRaw.map(v=>{
-    if(typeof v === "string") return { name:cleanText(v), price:null };
-    const p = parsePriceValue(pick(v,["price","amount"]));
-    return { name: cleanText(pick(v,["name","title","label"]) || ""), price: p.value };
+    if(!v || typeof v !== "object") return { name:"", price:null };
+    let pv = pick(v,["price","amount","extraPrice"]);
+    if(pv && typeof pv === "object") pv = pick(pv,["value","amount","price"]) ?? "";
+    const p = parsePriceValue(pv);
+    return { name: readName(pick(v,["name","title","label","nameEn"]) || ""), price: p.value };
   }).filter(v=>v.name) : [];
 
   if(!name) return null;
 
   return {
     id: itemIdCounter++,
-    category: category || "Uncategorized",
-    subCategory: cleanText(pick(raw,["subCategory","subcategory"]) || ""),
+    category: category,
+    subCategory: readName(pick(raw,["subCategory","subcategory","subSection"]) || ""),
     itemName: name,
     description: desc,
     price: price,
     currency: currency,
     imageUrl: typeof image === "string" ? image : "",
     available: available===undefined ? true : !!available,
-    sizes: sizes,
-    addons: addons,
+    sizes: toOptionList(sizesRaw),
+    addons: toOptionList(addonsRaw),
     notes: ""
   };
 }
 
-/* Walk all discovered JSON blobs and produce a flat list of raw normalized items. */
+/* Walk all discovered JSON blobs and produce a flat list of normalized items. */
 function extractItemsFromBlobs(blobs){
-  const candidateArrays = [];
-  blobs.forEach(b => findMenuCandidates(b, "", candidateArrays, 0));
+  const catIndex = new Map();
+  blobs.forEach(b => buildCategoryIndex(b, catIndex, 0, new Set()));
+
   const items = [];
-  candidateArrays.forEach(arr=>{
-    arr.forEach(raw=>{
-      const mapped = mapRawItem(raw, null);
-      if(mapped) items.push(mapped);
-    });
-  });
+  blobs.forEach(b => walkForMenuItems(b, "", items, 0, new Set(), catIndex));
+
+  // If a blob repeated the same menu, later dedupe handles it.
   return items;
 }
 
@@ -1004,22 +1251,46 @@ async function analyzeUrl(rawUrl){
   const fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
 
   if(!fetchResult.ok){
-    State.debug.extractionMethod = "failed: " + fetchResult.reason;
+    State.debug.extractionMethod = "fetch failed: " + fetchResult.reason;
     renderDebug();
-    showFallback(["Direct Fetch — blocked (" + fetchResult.reason + ")", "Embedded Page Data — unavailable", "Structured Patterns — unavailable"]);
+    showSection("error");
+    setError("Couldn't load that link",
+      "We tried the link directly and through every available relay, but the page could not be downloaded.<br><span class=\"mono\">" + escapeHtml(fetchResult.reason||"") + "</span><br>Check that the link is public and try again.");
     return;
   }
 
-  // Strategy 2 + 3 combined: parse embedded structured data, then generic pattern search
+  State.debug.fetchRoute = fetchResult.route || "";
+
+  // Strategy 2 + 3: embedded structured data, then generic pattern search
   const blobs = await runStage(3, async ()=> extractEmbeddedJsonBlobs(fetchResult.html));
-  const rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
+  let rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
+  let method = "structured data via " + (fetchResult.route||"fetch");
+
+  // Strategy 4: read the rendered page text itself
+  if(!rawItems.length){
+    rawItems = extractItemsFromDom(fetchResult.html)
+      .map(r => mapRawItem(r, r.category, null))
+      .filter(Boolean);
+    method = "page content via " + (fetchResult.route||"fetch");
+  }
+
+  // Reader/plain-text fallback (Markdown pages and text-only menus).
+  if(!rawItems.length){
+    rawItems = extractItemsFromText(fetchResult.html)
+      .map(r => mapRawItem(r, r.category, null))
+      .filter(Boolean);
+    method = "readable text via " + (fetchResult.route||"fetch");
+  }
 
   if(!rawItems.length){
-    State.debug.extractionMethod = "fetch ok, no structured menu data found";
+    State.debug.extractionMethod = "fetched, no menu data found";
     renderDebug();
-    showFallback(["Direct Fetch — ok", "Embedded Page Data — no menu structure found", "Structured Patterns — no menu structure found"]);
+    showSection("error");
+    setError("No menu found on that page",
+      "The page was downloaded successfully (via " + escapeHtml(fetchResult.route||"fetch") + "), but no priced menu items were present in its public content. The restaurant may require a location, login, or app session. Try a direct public menu page that displays item names and prices.");
     return;
   }
+  State.debug.extractionMethod = method;
 
   State.debug.rawRecordCount = rawItems.length;
   const meta = inferRestaurantMeta(blobs, normalized);
@@ -1044,11 +1315,9 @@ async function analyzeUrl(rawUrl){
 function handleValidationError(normalized){
   showSection("error");
   if(normalized.error==="empty"){
-    setError("Please paste a URL", "Enter a Talabat restaurant URL (or an Instagram redirect link that contains one) before analyzing.");
+    setError("Please paste a link", "Enter the menu page link (any website) before analyzing.");
   } else if(normalized.error==="invalid"){
     setError("That doesn't look like a valid URL", "Double-check the link you pasted — it should start with http:// or https://.");
-  } else if(normalized.error==="not-talabat"){
-    setError("Not a Talabat link", "This tool is built specifically for Talabat restaurant pages. The link you pasted resolved to: " + escapeHtml(normalized.normalizedUrl||"") + " — please paste a talabat.com restaurant URL, or an Instagram-style redirect link that contains one.");
   } else {
     setError("Couldn't process that link", "Please check the URL and try again.");
   }
@@ -1064,65 +1333,12 @@ function showNormalizedNote(normalized){
   note.classList.add("show");
 }
 
-/* Fallback UI (Strategy 4) */
-function showFallback(methodResults){
-  showSection("import");
-  $("#fallbackPanel").style.display = "block";
-  $("#methodTags").innerHTML = methodResults.map(m=>{
-    const failed = /blocked|unavailable|no menu/i.test(m);
-    return '<span class="method-tag '+(failed?"failed":"ok")+'">'+escapeHtml(m)+'</span>';
-  }).join("");
-  toastMsg("Direct extraction was blocked by the browser — use the import box below.", "err");
-}
 function resetErrorAndFallback(){
-  $("#fallbackPanel").style.display = "none";
   $("#errorSection").style.display = "none";
 }
 function setError(title, body){
   $("#errorTitle").textContent = title;
   $("#errorBody").innerHTML = body;
-}
-
-/* Process user-pasted HTML/JSON (still Strategy 2/3, run against local content) */
-async function processPastedContent(raw){
-  if(!raw || !raw.trim()){ toastMsg("Paste some HTML or JSON first.", "err"); return; }
-  showSection("processing");
-  renderStageList();
-  for(let i=0;i<3;i++){ setStage(i,"done"); }
-  $("#progressFill").style.width = "30%";
-
-  let blobs = [];
-  const trimmed = raw.trim();
-  if(trimmed.startsWith("{") || trimmed.startsWith("[")){
-    try{ blobs = [JSON.parse(trimmed)]; }
-    catch(e){ blobs = extractEmbeddedJsonBlobs(raw); }
-  } else {
-    blobs = extractEmbeddedJsonBlobs(raw);
-  }
-
-  const rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
-  if(!rawItems.length){
-    showSection("error");
-    setError("No menu data found in the pasted content", "We looked for JSON‑LD, embedded app state, and generic name/price structures but couldn't find anything that looked like a menu. Try pasting the full page source (Ctrl/Cmd+U → Select All → Copy), or use Demo Mode to explore the app.");
-    return;
-  }
-
-  const meta = inferRestaurantMeta(blobs, {country:""});
-  State.restaurant = {
-    name: meta.name || "Imported Restaurant", country: meta.country||"", city: meta.city||"",
-    currency: meta.currency||"", sourceUrl:"(pasted content)", extractedAt: new Date()
-  };
-
-  const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
-  await runStage(6, async ()=>{}); await runStage(7, async ()=>{});
-  await runStage(8, async ()=>{}); await runStage(9, async ()=>{});
-
-  State.debug.rawRecordCount = rawItems.length;
-  State.debug.normalizedRecordCount = cleaned.items.length;
-  State.debug.duplicateCount = cleaned.duplicates;
-  State.debug.extractionMethod = "user-pasted content";
-  State.isDemo = false;
-  finalizeDataset(cleaned.items);
 }
 
 async function loadDemo(){
@@ -1531,45 +1747,9 @@ function init(){
   $("#urlInput").addEventListener("keydown", e=>{ if(e.key==="Enter") $("#btnAnalyze").click(); });
 
   $("#btnDemo").addEventListener("click", loadDemo);
-  $("#btnTryDemoFromFallback").addEventListener("click", loadDemo);
-
-  $("#btnPasteData").addEventListener("click", ()=>{
-    $("#fallbackPanel").style.display = "block";
-    $("#methodTags").innerHTML = '<span class="method-tag ok">Manual import mode</span>';
-    $("#fallbackPanel").scrollIntoView({behavior:"smooth", block:"center"});
-  });
-  $("#btnProcessPaste").addEventListener("click", ()=> processPastedContent($("#pasteArea").value));
-
-  const dz = $("#dropzone");
-  const fileInput = $("#fileInput");
-  dz.addEventListener("click", ()=> fileInput.click());
-  dz.addEventListener("keydown", e=>{ if(e.key==="Enter") fileInput.click(); });
-  ["dragenter","dragover"].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.add("drag"); }));
-  ["dragleave","drop"].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.remove("drag"); }));
-  dz.addEventListener("drop", e=>{
-    const file = e.dataTransfer.files[0];
-    if(file) readDroppedFile(file);
-  });
-  fileInput.addEventListener("change", e=>{
-    const file = e.target.files[0];
-    if(file) readDroppedFile(file);
-  });
-  function readDroppedFile(file){
-    const reader = new FileReader();
-    reader.onload = ()=>{
-      $("#fallbackPanel").style.display = "block";
-      $("#pasteArea").value = reader.result;
-      $("#methodTags").innerHTML = '<span class="method-tag ok">File import: ' + escapeHtml(file.name) + '</span>';
-      processPastedContent(String(reader.result));
-    };
-    reader.onerror = ()=> toastMsg("Couldn't read that file.", "err");
-    reader.readAsText(file);
-  }
-
   $("#btnStartOver").addEventListener("click", ()=>{
     showSection("import");
     $("#normalizedNote").classList.remove("show");
-    $("#fallbackPanel").style.display = "none";
     $("#urlInput").value = "";
   });
   $("#btnErrorBack").addEventListener("click", ()=> showSection("import"));
