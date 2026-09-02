@@ -464,7 +464,10 @@ footer.site{padding:30px 0; text-align:center; color:var(--muted-2); font-size:1
           <div class="export-actions">
             <button class="btn btn-ghost btn-sm" id="btnExportJson" type="button">Export JSON</button>
             <button class="btn btn-ghost btn-sm" id="btnExportCsv" type="button">Download CSV</button>
-            <button class="btn btn-amber" id="btnExportXlsx" type="button">⬇ Download Excel</button>
+            <button class="btn btn-ghost btn-sm" id="btnExportXlsx" type="button">Detailed Excel</button>
+            <button class="btn btn-ghost btn-sm" id="btnExportPosEn" type="button">POS · English</button>
+            <button class="btn btn-ghost btn-sm" id="btnExportPosAr" type="button">POS · العربية</button>
+            <button class="btn btn-amber" id="btnExportPosBoth" type="button">⬇ Download EN + AR menu files</button>
           </div>
         </div>
       </div>
@@ -511,9 +514,11 @@ const State = {
   searchTerm: "",
   sortMode: "original",
   isDemo: false,
+  orphanGroups: [],     // modifier groups harvested from source but not linked to an item
   debug: {
     normalizedUrl:"", extractionMethod:"", rawRecordCount:0, normalizedRecordCount:0,
-    duplicateCount:0, detectedCategories:0, detectedCurrency:"", warnings:[]
+    duplicateCount:0, detectedCategories:0, detectedCurrency:"", warnings:[],
+    modifierGroups:0, modifierSource:"", arabicSource:"", arabicCoverage:""
   }
 };
 let itemIdCounter = 1;
@@ -982,9 +987,13 @@ function looksLikeMenuItem(obj){
   const keys = Object.keys(obj).map(k=>k.toLowerCase());
   const hasName = keys.some(k => ["name","title","itemname","productname","nameen","name_en"].includes(k));
   const hasPrice = keys.some(k => ["price","amount","cost","unitprice","finalprice","baseprice","displayprice","pricerange"].includes(k));
-  const isSection = SECTION_LIST_KEYS.concat(ITEM_CONTAINER_KEYS).some(k => Array.isArray(obj[k]) || Array.isArray(obj[k.replace(/s$/,"")]));
   const nameVal = pick(obj, ["name","title","itemName","productName"]);
   if(typeof nameVal !== "string" && typeof nameVal !== "object" && typeof nameVal !== "number") return false;
+  /* Only section/category arrays make this a container.  Modifier arrays
+     (choices, options, sizes, extras) must not disqualify a priced item. */
+  const isSection = !hasPrice && SECTION_LIST_KEYS.some(k =>
+    Array.isArray(pick(obj, [k])) || Array.isArray(pick(obj, [k.replace(/s$/,"")]))
+  );
   return hasName && hasPrice && !isSection;
 }
 
@@ -1050,10 +1059,272 @@ function pick(obj, candidates){
   return undefined;
 }
 
+
+/* =========================================================================
+   BILINGUAL + CHOICE-GROUP EXTRACTION (POS export engine)
+   Captures English and Arabic variants of every string, plus the full
+   modifier/choice-group tree, so the exporter can emit an identical
+   English workbook and Arabic workbook from a single extraction pass.
+   ========================================================================= */
+const AR_KEYS = ["ar","arabic","ar_AR","arAE","ar-AE","nameAr","name_ar","titleAr","descriptionAr","valueAr","local","localized"];
+const EN_KEYS = ["en","english","en_US","enUS","default","value","text","nameEn","name_en","titleEn","descriptionEn"];
+
+function readLang(v, lang){
+  if(v===undefined || v===null) return "";
+  if(typeof v === "string" || typeof v === "number") return cleanText(String(v));
+  if(Array.isArray(v)){
+    for(const x of v){ const s = readLang(x, lang); if(s) return s; }
+    return "";
+  }
+  if(typeof v === "object"){
+    const keys = lang==="ar" ? AR_KEYS : EN_KEYS;
+    for(const k of keys){
+      const hit = Object.keys(v).find(kk => kk.toLowerCase()===k.toLowerCase());
+      if(hit && typeof v[hit]==="string" && v[hit].trim()) return cleanText(v[hit]);
+    }
+    return "";
+  }
+  return "";
+}
+
+/* Resolve a field in both languages. Arabic falls back to English (and vice
+   versa) exactly like the reference workbooks, where untranslated rows keep
+   the original text. */
+function readBilingual(raw, baseKeys){
+  const arKeys = [];
+  baseKeys.forEach(k => arKeys.push(k+"Ar", k+"_ar", k+"Arabic", "arabic"+k.charAt(0).toUpperCase()+k.slice(1)));
+  const base = pick(raw, baseKeys);
+  let en = readLang(base, "en") || (typeof base==="string" ? cleanText(base) : "") || readName(base);
+  let ar = readLang(base, "ar") || readLang(pick(raw, arKeys), "ar") || cleanText(String(pick(raw, arKeys) ?? "" ));
+  if(!ar && containsArabic(en)){ ar = en; }
+  if(!en) en = ar;
+  if(!ar) ar = en;
+  return { en: en || "", ar: ar || "" };
+}
+
+function priceToText(value, rawValue){
+  if(typeof rawValue === "string"){
+    const s = rawValue.trim().replace(/[^\d.,-]/g,"").replace(/,/g,"");
+    if(s && /^\d+(\.\d+)?$/.test(s)) return s;
+  }
+  if(value===null || value===undefined || isNaN(value)) return "";
+  return String(round2(value));
+}
+
+const CHOICE_GROUP_KEYS = ["choices","choiceGroups","choiceGroup","modifierGroups","modifiers","optionGroups",
+  "optionsGroups","variations","sizes","variants","addons","addOns","extras","toppings","options","groups","selections"];
+const CHOICE_OPTION_KEYS = ["options","choices","items","values","modifiers","subOptions","optionsList","choiceItems"];
+const CHOICE_LABEL_KEYS = ["choiceGroups","choiceGroup","selectionGroups","modifierGroups","modifiers",
+  "optionGroups","optionsGroups","selections","choices"];
+
+function isChoiceGroupNode(node){
+  if(!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const opts = pick(node, CHOICE_OPTION_KEYS);
+  return Array.isArray(opts) && opts.length > 0;
+}
+
+/* A menu item can legally contain an options/choices array.  Older versions
+   treated every such array as a section container, which caused the real item
+   to disappear and its modifier options to be extracted as separate items. */
+function isFlatChoiceOption(node){
+  if(typeof node === "string" || typeof node === "number") return true;
+  if(!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const name = readBilingual(node, ["name","title","label","optionName","displayName"]);
+  const hasPrice = pick(node, ["price","amount","cost","extraPrice","optionPrice","unitPrice"]) !== undefined;
+  const hasNested = CHOICE_OPTION_KEYS.some(k=>Array.isArray(pick(node,[k])));
+  return !!(name.en || name.ar) && !hasNested && (hasPrice || Object.keys(node).length <= 8);
+}
+
+/* Keep the labels that the source attached to each item.  These labels are
+   essential when the site publishes a separate global modifier catalogue:
+   they are the bridge between "Extras" on the item and "Add On's:" in the
+   catalogue. */
+function collectChoiceGroupLabels(raw){
+  const out = [];
+  const seen = new Set();
+  const add = value => {
+    splitChoiceGroupText(value).forEach(label=>{
+      const key = normalizeModifierKey(label);
+      if(label && key && !seen.has(key)){ seen.add(key); out.push(label); }
+    });
+  };
+  const visit = (value, depth)=>{
+    if(depth > 5 || value===null || value===undefined) return;
+    if(typeof value === "string" || typeof value === "number"){ add(value); return; }
+    if(Array.isArray(value)){ value.forEach(v=>visit(v, depth+1)); return; }
+    if(typeof value !== "object") return;
+    if(isChoiceGroupNode(value)){
+      const n = readBilingual(value, ["name","title","label","groupName","displayName","header"]);
+      if(n.en || n.ar) add(n.en || n.ar);
+      return;
+    }
+    const explicit = readBilingual(value, ["groupName","choiceGroupName","modifierGroupName"]);
+    if(explicit.en || explicit.ar) add(explicit.en || explicit.ar);
+  };
+  CHOICE_LABEL_KEYS.forEach(k=>{
+    const value = pick(raw, [k]);
+    if(value!==undefined && value!==null) visit(value, 0);
+  });
+  return out;
+}
+
+function splitChoiceGroupText(value){
+  const text = cleanText(String(value||""));
+  if(!text) return [];
+  /* POS exports use # as the group separator.  Do not split ordinary
+     punctuation, because labels such as "Choose Your Size:" are meaningful. */
+  return text.split(/\s*#\s*/).map(cleanText).filter(Boolean);
+}
+
+function normalizeModifierKey(value){
+  return cleanText(String(value||""))
+    .toLowerCase()
+    .replace(/['’`"]/g,"")
+    .replace(/[^a-z0-9\u0600-\u06ff]+/g,"");
+}
+
+function modifierKind(value){
+  const s = normalizeModifierKey(value);
+  if(/size|variant|portion|chooseyoursize|حجم|اختيارالحجم/.test(s)) return "size";
+  if(/addon|addons|add|extra|topping|sauce|dressing|cheese|إضافة|اضافات|إضافات/.test(s)) return "addon";
+  return s;
+}
+
+function numOr(v, fallback){
+  const n = Number(v);
+  return isNaN(n) ? fallback : n;
+}
+
+/* Normalize one modifier group into { name{en,ar}, min, max, options[] }. */
+function normalizeChoiceGroup(node){
+  const nameB = readBilingual(node, ["name","title","label","groupName","displayName","header"]);
+  const optsRaw = pick(node, CHOICE_OPTION_KEYS) || [];
+  const options = (Array.isArray(optsRaw) ? optsRaw : []).map(o=>{
+    if(typeof o === "string") return { name:{en:cleanText(o), ar:cleanText(o)}, price:0, oldPrice:"" };
+    if(!o || typeof o !== "object") return null;
+    const nm = readBilingual(o, ["name","title","label","optionName","displayName"]);
+    let pv = pick(o, ["price","amount","extraPrice","optionPrice","unitPrice","value"]);
+    if(pv && typeof pv === "object") pv = pick(pv, ["value","amount","price","total"]) ?? "";
+    let ov = pick(o, ["oldPrice","originalPrice","priceBeforeDiscount","basePrice"]);
+    if(ov && typeof ov === "object") ov = pick(ov, ["value","amount","price"]) ?? "";
+    const parsed = parsePriceValue(pv);
+    const parsedOld = parsePriceValue(ov);
+    if(!nm.en && !nm.ar) return null;
+    return {
+      name: nm,
+      price: parsed.value === null ? 0 : round2(parsed.value),
+      oldPrice: parsedOld.value === null || parsedOld.value === 0 ? "" : round2(parsedOld.value)
+    };
+  }).filter(Boolean);
+  if(!options.length) return null;
+  const min = numOr(pick(node, ["minQuantity","min","minimum","minSelection","minQty","minChoices"]), 0);
+  const maxRaw = pick(node, ["maxQuantity","max","maximum","maxSelection","maxQty","maxChoices"]);
+  const max = numOr(maxRaw, options.length);
+  const required = pick(node, ["required","isRequired","mandatory"]);
+  return {
+    name: { en: nameB.en || "Options", ar: nameB.ar || nameB.en || "Options" },
+    min: required && !min ? 1 : Math.max(0, min),
+    max: Math.max(0, max),
+    options
+  };
+}
+
+/* Collect every modifier group attached to one raw item record. */
+function collectChoiceGroups(raw){
+  const out = [];
+  const seen = new Set();
+  const visit = (node, depth)=>{
+    if(!node || typeof node !== "object" || depth > 5) return;
+    if(Array.isArray(node)){ node.forEach(n=>visit(n, depth+1)); return; }
+    if(isChoiceGroupNode(node)){
+      const g = normalizeChoiceGroup(node);
+      if(g){
+        const sig = g.name.en + "|" + g.options.map(o=>o.name.en+":"+o.price).join(",");
+        if(!seen.has(sig)){ seen.add(sig); out.push(g); }
+      }
+      return;
+    }
+    Object.keys(node).forEach(k=>{
+      if(CHOICE_GROUP_KEYS.some(c=>c.toLowerCase()===k.toLowerCase())) visit(node[k], depth+1);
+    });
+  };
+  CHOICE_GROUP_KEYS.forEach(k=>{
+    const v = pick(raw, [k]);
+    if(v) visit(v, 0);
+  });
+
+  /* Flat arrays are common in delivery payloads:
+       sizes: [{name, price}], addons: [{name, price}]
+     They are modifiers too, but they are not shaped like {name, options[]}. */
+  const flatGroup = (keys, label, min, max)=>{
+    const key = keys.find(k=>{
+      const v = pick(raw, [k]);
+      return Array.isArray(v) && v.length && v.every(isFlatChoiceOption);
+    });
+    if(!key) return;
+    const values = pick(raw, [key]);
+    const options = values.map(o=>{
+      if(typeof o === "string" || typeof o === "number"){
+        return { name:{en:cleanText(o), ar:cleanText(o)}, price:0, oldPrice:"" };
+      }
+      const nm = readBilingual(o, ["name","title","label","optionName","displayName"]);
+      let pv = pick(o, ["price","amount","extraPrice","optionPrice","unitPrice","value"]);
+      if(pv && typeof pv === "object") pv = pick(pv, ["value","amount","price","total"]) ?? "";
+      const parsed = parsePriceValue(pv);
+      return { name:nm, price:parsed.value===null ? 0 : round2(parsed.value), oldPrice:"" };
+    }).filter(o=>o.name.en || o.name.ar);
+    const resolvedMax = max > 0 ? max : options.length;
+    const group = {
+      name:{en:label, ar:label}, min, max:Math.max(min, resolvedMax), options
+    };
+    const sig = group.name.en + "|" + group.options.map(o=>o.name.en+":"+o.price).join(",");
+    if(options.length && !seen.has(sig)){ seen.add(sig); out.push(group); }
+  };
+  flatGroup(["sizes","variants"], "Choose Your Size:", 1, 1);
+  flatGroup(["addons","addOns","extras","toppings"], "Add On's:", 0,
+    Math.max(1, Number(pick(raw, ["maxAddons","maxExtras"])) || 0));
+  /* Some APIs call the modifier list simply "options" or "choices".  Only
+     synthesize it when it is a genuinely flat option list; structured groups
+     were already handled above. */
+  flatGroup(["options","choices"], "Options", 0, 0);
+  return out;
+}
+
+/* ---- identity helpers (used for modifier linking + Arabic merging) ---- */
+function idOf(raw){
+  const v = pick(raw, ["id","itemId","menuItemId","productId","_id","uid","sku","code"]);
+  return (v===undefined || v===null || typeof v === "object") ? "" : String(v);
+}
+/* Every id-looking value on the record that could point at a modifier group. */
+function collectRefIds(raw){
+  const out = [];
+  if(!raw || typeof raw !== "object") return out;
+  Object.keys(raw).forEach(k=>{
+    if(!/choice|modifier|option|group|topping|addon|extra|variant/i.test(k)) return;
+    const v = raw[k];
+    const push = x => {
+      if(x===null || x===undefined) return;
+      if(typeof x === "string" || typeof x === "number") out.push(String(x));
+      else if(typeof x === "object"){
+        const inner = pick(x, ["id","groupId","choiceId","modifierGroupId","_id"]);
+        if(inner!==undefined && inner!==null && typeof inner !== "object") out.push(String(inner));
+      }
+    };
+    if(Array.isArray(v)) v.forEach(push); else push(v);
+  });
+  return Array.from(new Set(out));
+}
+function matchKeyOf(name, price){
+  return cleanText(String(name||"")).toLowerCase().replace(/\s+/g,"") + "|" +
+    (price===null || price===undefined || isNaN(price) ? "" : String(round2(price)));
+}
+
 /* Map an arbitrary raw record onto our normalized data model. */
 function mapRawItem(raw, fallbackCategory, catIndex){
-  const name = readName(pick(raw, ["name","title","itemName","productName","nameEn","name_en","en_name"]));
-  const desc = readName(pick(raw, ["description","desc","details","summary","descriptionEn"]) || "");
+  const nameB = readBilingual(raw, ["name","title","itemName","productName"]);
+  const descB = readBilingual(raw, ["description","desc","details","summary"]);
+  const name = nameB.en || nameB.ar;
+  const desc = descB.en || descB.ar;
   let priceRaw = pick(raw, ["price","amount","cost","unitPrice","finalPrice","basePrice","displayPrice","discountedPrice"]);
   if(priceRaw && typeof priceRaw === "object"){
     priceRaw = pick(priceRaw, ["value","amount","price","total","formatted","text"]) ?? "";
@@ -1061,18 +1332,24 @@ function mapRawItem(raw, fallbackCategory, catIndex){
   const { value: price, currency: parsedCurrency } = parsePriceValue(priceRaw);
   const currency = readName(pick(raw, ["currency","currencyCode","curr"])) || parsedCurrency || "";
 
-  let category = readName(pick(raw, ["category","categoryName","sectionName","menuSectionName","section","group","groupName"]));
+  const categoryB = readBilingual(raw, ["category","categoryName","sectionName","menuSectionName","section"]);
+  let category = categoryB.en || categoryB.ar || "";
   if(!category && catIndex){
     const ref = pick(raw, ["sectionId","categoryId","menuSectionId","categoryID","sectionID"]);
     if(ref!==undefined && ref!==null && catIndex.has(String(ref))) category = catIndex.get(String(ref));
   }
   if(!category) category = cleanText(fallbackCategory || "");
   if(!category) category = "Uncategorized";
+  if(!categoryB.en) categoryB.en = category;
+  if(!categoryB.ar) categoryB.ar = categoryB.en;
 
   let image = pick(raw, ["image","imageUrl","img","photo","thumbnail","picture","imagePath"]) || "";
   if(image && typeof image === "object") image = pick(image, ["url","src","path"]) || "";
   const available = pick(raw, ["available","isAvailable","inStock"]);
-  const sizesRaw = pick(raw, ["sizes","variants","options","choices"]) || [];
+  /* "options"/"choices" are often modifier groups, not item sizes.  They are
+     normalized by collectChoiceGroups below; keeping them out of the legacy
+     size field prevents an add-on list from being mislabeled as a variant. */
+  const sizesRaw = pick(raw, ["sizes","variants"]) || [];
   const addonsRaw = pick(raw, ["addons","addOns","modifiers","extras","toppings"]) || [];
 
   const toOptionList = (src)=> Array.isArray(src) ? src.map(v=>{
@@ -1088,7 +1365,17 @@ function mapRawItem(raw, fallbackCategory, catIndex){
 
   return {
     id: itemIdCounter++,
+    sourceId: idOf(raw),
+    refIds: collectRefIds(raw),
+    matchKey: matchKeyOf(nameB.en || nameB.ar, price),
     category: category,
+    categoryI18n: { en: categoryB.en || category, ar: categoryB.ar || category },
+    nameI18n: { en: nameB.en || name, ar: nameB.ar || name },
+    descriptionI18n: { en: descB.en || desc, ar: descB.ar || desc },
+    priceText: priceToText(price, typeof priceRaw === "string" ? priceRaw : undefined),
+    sizeLabel: cleanText(readName(pick(raw, ["size","sizeName","portion","variantName"]) || "")),
+    choiceGroups: collectChoiceGroups(raw),
+     choiceGroupLabels: collectChoiceGroupLabels(raw),
     subCategory: readName(pick(raw,["subCategory","subcategory","subSection"]) || ""),
     itemName: name,
     description: desc,
@@ -1253,8 +1540,8 @@ function buildDemoDataset(){
    ========================================================================= */
 const STAGES = [
   "Validating URL", "Detecting restaurant", "Loading menu data", "Extracting categories",
-  "Extracting menu items", "Cleaning data", "Detecting prices", "Detecting variants",
-  "Preparing Excel workbook", "Finalizing export"
+  "Extracting menu items", "Cleaning data", "Scanning source for modifiers",
+  "Fetching Arabic menu", "Completing Arabic content", "Preparing Excel workbooks"
 ];
 
 function renderStageList(){
@@ -1362,9 +1649,45 @@ async function analyzeUrl(rawUrl){
   });
 
   const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
-  await runStage(6, async ()=>{});
-  await runStage(7, async ()=>{});
-  await runStage(8, async ()=>{});
+
+  // Stage 6 — deep modifier harvesting straight from the page source code.
+  await runStage(6, async ()=>{
+    const acc = harvestFromSource(blobs, fetchResult.html);
+    const before = cleaned.items.length;
+    cleaned.items = dropModifierEchoes(cleaned.items, acc);
+    if(cleaned.items.length !== before) State.debug.warnings.push((before - cleaned.items.length) + " modifier options were removed from the item list.");
+    const res = attachModifierGroups(cleaned.items, acc);
+    State.orphanGroups = res.orphans;
+    const total = cleaned.items.reduce((n,it)=>n + ((it.choiceGroups||[]).length), 0) + res.orphans.length;
+    State.debug.modifierGroups = total;
+    State.debug.modifierSource = acc.list.length
+      ? ("source scan: " + acc.list.length + " groups found, " + res.attached + " linked" + (res.orphans.length ? ", " + res.orphans.length + " unlinked" : ""))
+      : "inline item data only";
+    if(!total) State.debug.warnings.push("No modifier groups were exposed by this page.");
+  });
+
+  // Stage 7 — Arabic rendition of the same menu.
+  await runStage(7, async ()=>{
+    try{
+      const ar = await fetchArabicItems(normalized.normalizedUrl);
+      if(ar){
+        const merged = mergeArabicItems(cleaned.items, ar.items);
+        State.debug.arabicSource = "arabic page: " + ar.url + " (" + merged + " items matched)";
+      } else {
+        State.debug.arabicSource = "no arabic rendition found";
+      }
+    }catch(e){ State.debug.arabicSource = "arabic fetch failed: " + e.message; }
+  });
+
+  // Stage 8 — translate whatever is still English so the Arabic file is Arabic.
+  await runStage(8, async ()=>{
+    try{
+      const filled = await autoTranslateArabic(cleaned.items, State.orphanGroups);
+      if(filled) State.debug.arabicSource += " · auto-translated " + filled + " fields";
+    }catch(e){ /* Arabic falls back to source language */ }
+    State.debug.arabicCoverage = arabicCoverage(cleaned.items);
+  });
+
   await runStage(9, async ()=>{});
 
   State.debug.normalizedRecordCount = cleaned.items.length;
@@ -1596,7 +1919,8 @@ function buildFilename(ext){
   return base + "_Menu_" + dateStr + "." + ext;
 }
 function updateFilenamePreview(){
-  $("#filenamePreview").textContent = buildFilename("xlsx");
+  const base = sanitizeFilenamePart(State.restaurant.name || "menu").toLowerCase();
+  $("#filenamePreview").textContent = base + "_en.xlsx  ·  " + base + "_ar.xlsx";
 }
 
 /* =========================================================================
@@ -1757,6 +2081,643 @@ function downloadBlob(blob, filename){
   setTimeout(()=>URL.revokeObjectURL(url), 2000);
 }
 
+
+/* =========================================================================
+   DEEP MODIFIER HARVESTING  (source-code level)
+   Many menu sites never nest modifier groups inside the item record: they ship
+   one global "choices"/"modifierGroups" catalogue and reference it by id, or
+   they only expose it inside the raw HTML/flight payload. This layer scans the
+   entire source code, harvests every modifier group it can find, and links the
+   groups back to their items by id — so the Modifiers sheet is never empty.
+   ========================================================================= */
+
+const MOD_NAME_HINT = /(choice|modifier|option|addon|add-on|extra|topping|size|variant|selection|group)/i;
+
+/* A modifier-group-shaped node: a name plus a list of priced/plain options,
+   where the options are NOT themselves full menu items with their own groups. */
+function looksLikeModifierGroup(node){
+  if(!node || typeof node !== "object" || Array.isArray(node)) return false;
+  /* A priced product with an options/choices array is still a product, not
+     the global modifier definition.  Let the walker descend into it so the
+     nested group/options can be harvested separately. */
+  const hasProductPrice = pick(node, ["price","amount","cost","unitPrice","basePrice","finalPrice"]) !== undefined;
+  const hasProductIdentity = pick(node, ["itemName","productName","menuItemId","productId","sku"]) !== undefined;
+  const hasExplicitGroupName = pick(node, ["groupName","modifierGroupName","choiceGroupName"]) !== undefined;
+  if(hasProductPrice && (hasProductIdentity || !hasExplicitGroupName)) return false;
+  const opts = pick(node, CHOICE_OPTION_KEYS);
+  if(!Array.isArray(opts) || !opts.length || opts.length > 200) return false;
+  let named = 0;
+  for(const o of opts){
+    if(typeof o === "string" || typeof o === "number"){ named++; continue; }
+    if(!o || typeof o !== "object") return false;
+    if(Array.isArray(pick(o, CHOICE_OPTION_KEYS))) return false;   // nested menu structure
+    const nm = readBilingual(o, ["name","title","label","optionName","displayName"]);
+    if(nm.en || nm.ar) named++;
+  }
+  if(named < Math.max(1, Math.ceil(opts.length * 0.6))) return false;
+  const nameB = readBilingual(node, ["name","title","label","groupName","displayName","header"]);
+  const hasMinMax = ["min","max","minQuantity","maxQuantity","minimum","maximum","required","isRequired","minSelection","maxSelection"]
+    .some(k => pick(node, [k]) !== undefined);
+  return !!(nameB.en || nameB.ar) || hasMinMax;
+}
+
+function groupItemRefs(node){
+  const out = [];
+  const add = v => {
+    if(v===undefined || v===null) return;
+    if(Array.isArray(v)){ v.forEach(add); return; }
+    if(typeof v !== "object") out.push(String(v));
+    else {
+      const inner = pick(v, ["id","itemId","menuItemId","productId","parentId","_id"]);
+      if(inner!==undefined && inner!==null && typeof inner!=="object") out.push(String(inner));
+    }
+  };
+  ["itemId","itemIds","menuItemId","menuItemIds","productId","productIds","parentId",
+    "itemID","item_id","product_id","menuItemID","menuItem_id"].forEach(k=>{
+    add(pick(node, [k]));
+  });
+  return Array.from(new Set(out));
+}
+
+function groupAliases(node, group){
+  const out = [];
+  const add = value => {
+    if(value===undefined || value===null) return;
+    if(Array.isArray(value)){ value.forEach(add); return; }
+    if(typeof value === "string" || typeof value === "number"){
+      splitChoiceGroupText(value).forEach(v=>{ if(v) out.push(v); });
+    }
+  };
+  ["name","title","label","groupName","displayName","header","choiceGroupName",
+    "modifierGroupName","type","key","slug","code"].forEach(k=>add(pick(node,[k])));
+  if(group){
+    add(group.name.en);
+    add(group.name.ar);
+  }
+  return Array.from(new Set(out.map(cleanText).filter(Boolean)));
+}
+
+/* Walk anything (blob or parsed source JSON) and harvest every modifier group. */
+function harvestModifierGroups(node, acc, depth, seen){
+  depth = depth || 0;
+  if(depth > 18 || !node || typeof node !== "object") return acc;
+  if(seen.has(node)) return acc;
+  seen.add(node);
+  if(Array.isArray(node)){
+    node.forEach(c=>harvestModifierGroups(c, acc, depth+1, seen));
+    return acc;
+  }
+  if(looksLikeModifierGroup(node)){
+    const g = normalizeChoiceGroup(node);
+    if(g){
+      const sig = (g.name.en||g.name.ar) + "||" + g.options.map(o=>(o.name.en||o.name.ar)+":"+o.price).join(",");
+      if(!acc.bySig.has(sig)){
+        const entry = {
+          group:g,
+          id: idOf(node) || String(pick(node,["groupId","choiceId","modifierGroupId"]) ?? ""),
+          itemRefs: groupItemRefs(node),
+          aliases: groupAliases(node, g)
+        };
+        acc.bySig.set(sig, entry);
+        acc.list.push(entry);
+        if(entry.id) acc.byId.set(entry.id, entry);
+      } else {
+        const prev = acc.bySig.get(sig);
+        groupItemRefs(node).forEach(r=>{ if(prev.itemRefs.indexOf(r)===-1) prev.itemRefs.push(r); });
+        groupAliases(node, g).forEach(a=>{ if(prev.aliases.indexOf(a)===-1) prev.aliases.push(a); });
+      }
+    }
+    // keep descending: catalogues sometimes nest groups inside groups
+  }
+  Object.keys(node).forEach(k=>harvestModifierGroups(node[k], acc, depth+1, seen));
+  return acc;
+}
+
+/* Source-code sweep: blobs first, then raw markup for JSON that the blob
+   extractor did not pick up (inline flight chunks, escaped payloads, etc). */
+function harvestFromSource(blobs, source){
+  const acc = { list:[], bySig:new Map(), byId:new Map() };
+  (blobs||[]).forEach(b=>harvestModifierGroups(b, acc, 0, new Set()));
+  if(source){
+    const patterns = [
+      /"(choices|choiceGroups|modifierGroups|modifiers|optionGroups|toppings|addons|variations)"\s*:\s*\[/,
+      /"(options|choices)"\s*:\s*\[\s*\{[\s\S]{0,600}?"price"/
+    ];
+    patterns.forEach(re=>{
+      scanBalancedJson(source, re, 120).forEach(j=>harvestModifierGroups(j, acc, 0, new Set()));
+    });
+    // Next.js flight strings embed JSON with escaped quotes — unescape and re-scan.
+    if(acc.list.length < 1 && /\\"(choices|options|modifierGroups)\\"/.test(source)){
+      const unescaped = source.replace(/\\"/g, '"').replace(/\\n/g, "\n");
+      patterns.forEach(re=>{
+        scanBalancedJson(unescaped, re, 120).forEach(j=>harvestModifierGroups(j, acc, 0, new Set()));
+      });
+    }
+  }
+  return acc;
+}
+
+function groupMatchesLabel(entry, label){
+  const target = normalizeModifierKey(label);
+  if(!target) return false;
+  const aliases = (entry.aliases||[]).map(normalizeModifierKey).filter(Boolean);
+  if(aliases.some(a=>a===target || a.includes(target) || target.includes(a))) return true;
+  const targetKind = modifierKind(label);
+  if(!targetKind || targetKind===target) return false;
+  return aliases.some(a=>modifierKind(a)===targetKind);
+}
+
+/* Attach harvested groups to the items that reference them.  Linking is
+   deliberately multi-stage: IDs are authoritative, source labels are the
+   next-best signal, and a semantic fallback is used only when one candidate
+   exists.  This prevents one global "Extras" catalogue from being copied to
+   every menu item. */
+function attachModifierGroups(items, acc){
+  if(!acc || !acc.list.length) return { attached:0, orphans:[] };
+  const used = new Set();
+  let attached = 0;
+
+  // 1) group -> item, by the item id the group itself declares
+  const byItemRef = new Map();
+  acc.list.forEach(e=>e.itemRefs.forEach(r=>{
+    if(!byItemRef.has(r)) byItemRef.set(r, []);
+    byItemRef.get(r).push(e);
+  }));
+
+  items.forEach(it=>{
+    const found = [];
+    // 2) item -> group, by the ids the item record references
+    (it.refIds||[]).forEach(r=>{
+      const e = acc.byId.get(String(r));
+      if(e && found.indexOf(e)===-1) found.push(e);
+    });
+    if(it.sourceId && byItemRef.has(it.sourceId)){
+      byItemRef.get(it.sourceId).forEach(e=>{ if(found.indexOf(e)===-1) found.push(e); });
+    }
+
+    /* 3) item-level labels, e.g. "Choose Your Size:" or "Extras". */
+    const labels = (it.choiceGroupLabels||[]).map(cleanText).filter(Boolean);
+    labels.forEach(label=>{
+      const exact = acc.list.filter(e=>(e.aliases||[]).some(a=>{
+        const x = normalizeModifierKey(a), y = normalizeModifierKey(label);
+        return x && y && (x===y || x.includes(y) || y.includes(x));
+      }));
+      if(exact.length){
+        exact.forEach(e=>{ if(found.indexOf(e)===-1) found.push(e); });
+        return;
+      }
+      const kind = modifierKind(label);
+      if(!kind) return;
+      const candidates = acc.list.filter(e=>(e.aliases||[]).some(a=>modifierKind(a)===kind));
+      if(candidates.length===1 && found.indexOf(candidates[0])===-1) found.push(candidates[0]);
+    });
+
+    /* 4) direct groups extracted from the item itself can be matched to a
+       richer copy in the global catalogue (preserving IDs/options). */
+    (it.choiceGroups||[]).forEach(local=>{
+      const localNames = [local.name && local.name.en, local.name && local.name.ar].filter(Boolean);
+      acc.list.forEach(e=>{
+        if(localNames.some(n=>groupMatchesLabel(e,n)) && found.indexOf(e)===-1) found.push(e);
+      });
+    });
+    if(!found.length) return;
+    const existing = new Set((it.choiceGroups||[]).map(g=>(g.name.en||g.name.ar)+"|"+g.options.length));
+    found.forEach(e=>{
+      used.add(e);
+      const key = (e.group.name.en||e.group.name.ar)+"|"+e.group.options.length;
+      if(existing.has(key)) return;
+      existing.add(key);
+      it.choiceGroups = (it.choiceGroups||[]).concat([e.group]);
+      attached++;
+    });
+  });
+
+  /* Keep every unlinked catalogue group as an orphan.  A modifier must never
+     vanish merely because the delivery site omitted the reverse item link. */
+  const orphans = acc.list.filter(e=>!used.has(e)).map(e=>e.group);
+  return { attached, orphans };
+}
+
+/* Modifier options sometimes get picked up as if they were menu items
+   ("Large — 0.500"). Once the real groups are known, drop those echoes. */
+function dropModifierEchoes(items, acc){
+  if(!acc || !acc.list.length) return items;
+  const optKeys = new Set();
+  acc.list.forEach(e=>{
+    e.group.options.forEach(o=>optKeys.add(matchKeyOf(o.name.en||o.name.ar, o.price)));
+  });
+  return items.filter(it=>{
+    if(it.choiceGroups && it.choiceGroups.length) return true;
+    if(it.description) return true;
+    if(!optKeys.has(it.matchKey)) return true;
+    return false;   // exact option echo (name + price match a modifier option)
+  });
+}
+
+/* =========================================================================
+   ARABIC LANGUAGE PASS
+   The Arabic workbook must carry Arabic content, not an English copy. Three
+   escalating strategies: (1) Arabic fields already present in the payload,
+   (2) refetch the same page in its Arabic locale and merge field-by-field,
+   (3) machine-translate whatever is still English.
+   ========================================================================= */
+
+function arabicUrlVariants(url){
+  const out = [];
+  const add = u => { if(u && out.indexOf(u)===-1 && u!==url) out.push(u); };
+  let p;
+  try{ p = new URL(url); }catch(e){ return out; }
+
+  // locale as a path segment: /en/... -> /ar/...
+  const segs = p.pathname.split("/");
+  const localeIdx = segs.findIndex(s2 => /^(en|en-[a-z]{2}|english)$/i.test(s2));
+  if(localeIdx > -1){
+    const q = new URL(p.href); const s2 = segs.slice(); s2[localeIdx] = "ar";
+    q.pathname = s2.join("/"); add(q.href);
+  } else {
+    const q = new URL(p.href);
+    q.pathname = "/ar" + (p.pathname.startsWith("/") ? p.pathname : "/"+p.pathname);
+    add(q.href);
+  }
+  // locale as a query parameter
+  [["lang","ar"],["language","ar"],["locale","ar"],["hl","ar"],["l","ar"]].forEach(([k,v])=>{
+    const q = new URL(p.href); q.searchParams.set(k, v); add(q.href);
+  });
+  return out.slice(0, 4);
+}
+
+function arabicRatio(text){
+  const t = String(text||"");
+  const ar = (t.match(/[\u0600-\u06FF]/g)||[]).length;
+  return t.length ? ar / t.length : 0;
+}
+
+/* Fetch the Arabic rendition of the page and re-run the whole extractor on it. */
+async function fetchArabicItems(url){
+  for(const variant of arabicUrlVariants(url)){
+    const r = await attemptDirectFetch(variant);
+    if(!r.ok || !r.html) continue;
+    if(arabicRatio(r.html) < 0.01) continue;
+    const blobs = extractEmbeddedJsonBlobs(r.html);
+    let items = extractItemsFromBlobs(blobs);
+    if(!items.length) items = extractItemsFromDom(r.html).map(x=>mapRawItem(x, x.category, null)).filter(Boolean);
+    const acc = harvestFromSource(blobs, r.html);
+    items = dropModifierEchoes(items, acc);
+    attachModifierGroups(items, acc);
+    const arItems = items.filter(it=>containsArabic(it.itemName) || containsArabic(it.nameI18n && it.nameI18n.ar));
+    if(arItems.length) return { items, url:variant, source:r.html };
+  }
+  return null;
+}
+
+/* Merge the Arabic rendition into the primary dataset: by source id, then by
+   name+price signature, then positionally when both lists line up. */
+function mergeArabicItems(items, arItems){
+  if(!items.length || !arItems || !arItems.length) return 0;
+  const byId = new Map(), byKey = new Map();
+  arItems.forEach((a,i)=>{
+    if(a.sourceId) byId.set(a.sourceId, a);
+    if(a.matchKey) byKey.set(a.matchKey, a);
+    a.__pos = i;
+  });
+  let merged = 0;
+  items.forEach((it, idx)=>{
+    let a = (it.sourceId && byId.get(it.sourceId)) ||
+            (it.matchKey && byKey.get(it.matchKey)) ||
+            (arItems.length === items.length ? arItems[idx] : null);
+    if(!a) return;
+    const take = (src, dst, key)=>{
+      const v = (src && (src[key] || "")) || "";
+      if(v && containsArabic(v)) { dst[key] = v; return true; }
+      return false;
+    };
+    let hit = false;
+    hit = take(a.nameI18n, it.nameI18n, "ar") || hit;
+    if(!containsArabic(it.nameI18n.ar) && containsArabic(a.itemName)) { it.nameI18n.ar = a.itemName; hit = true; }
+    if(!containsArabic(it.categoryI18n.ar)){
+      const c = (a.categoryI18n && (containsArabic(a.categoryI18n.ar) ? a.categoryI18n.ar : a.categoryI18n.en)) || a.category || "";
+      if(containsArabic(c)){ it.categoryI18n.ar = c; hit = true; }
+    }
+    if(!containsArabic(it.descriptionI18n.ar)){
+      const d = (a.descriptionI18n && (containsArabic(a.descriptionI18n.ar) ? a.descriptionI18n.ar : a.descriptionI18n.en)) || a.description || "";
+      if(containsArabic(d)){ it.descriptionI18n.ar = d; hit = true; }
+    }
+    // modifier groups: align positionally inside the item
+    const ag = (a.choiceGroups||[]), ig = (it.choiceGroups||[]);
+    ig.forEach((g, gi)=>{
+      const src = ag[gi];
+      if(!src) return;
+      const gn = containsArabic(src.name.ar) ? src.name.ar : (containsArabic(src.name.en) ? src.name.en : "");
+      if(gn) g.name.ar = gn;
+      g.options.forEach((o, oi)=>{
+        const so = src.options[oi];
+        if(!so) return;
+        const on = containsArabic(so.name.ar) ? so.name.ar : (containsArabic(so.name.en) ? so.name.en : "");
+        if(on) o.name.ar = on;
+      });
+    });
+    if(hit) merged++;
+  });
+  return merged;
+}
+
+/* ---- machine translation fallback (no API key, batched, fail-safe) ---- */
+const TRANSLATE_CACHE = new Map();
+
+async function translateToArabic(texts){
+  const unique = Array.from(new Set(texts.filter(t=>t && !containsArabic(t))));
+  const pending = unique.filter(t=>!TRANSLATE_CACHE.has(t));
+  const chunks = [];
+  let cur = [], curLen = 0;
+  pending.forEach(t=>{
+    if(curLen + t.length > 900 && cur.length){ chunks.push(cur); cur = []; curLen = 0; }
+    cur.push(t); curLen += t.length + 1;
+  });
+  if(cur.length) chunks.push(cur);
+
+  for(const chunk of chunks){
+    const q = chunk.join("\n");
+    const endpoint = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ar&dt=t&q=" + encodeURIComponent(q);
+    let out = null;
+    for(const target of [endpoint, "https://api.allorigins.win/raw?url=" + encodeURIComponent(endpoint)]){
+      const r = await fetchOnce(target, 15000);
+      if(!r.ok) continue;
+      const parsed = safeJsonParse(r.html);
+      if(parsed && Array.isArray(parsed[0])){
+        out = parsed[0].map(seg => (seg && seg[0]) || "").join("");
+        break;
+      }
+    }
+    if(!out) continue;
+    const lines = out.split("\n");
+    chunk.forEach((src, i)=>{
+      const val = cleanText(lines[i] || "");
+      if(val) TRANSLATE_CACHE.set(src, val);
+    });
+  }
+  return TRANSLATE_CACHE;
+}
+
+/* Fill every still-English Arabic slot (items + modifier groups). */
+async function autoTranslateArabic(items, orphanGroups){
+  const wanted = [];
+  const slots = [];
+  const need = (obj, key)=>{
+    const v = obj[key];
+    if(!v || containsArabic(v)) return;
+    slots.push({ obj, key, src:v });
+    wanted.push(v);
+  };
+  items.forEach(it=>{
+    need(it.nameI18n, "ar");
+    need(it.categoryI18n, "ar");
+    need(it.descriptionI18n, "ar");
+    (it.choiceGroups||[]).forEach(g=>{
+      need(g.name, "ar");
+      g.options.forEach(o=>need(o.name, "ar"));
+    });
+  });
+  (orphanGroups||[]).forEach(g=>{
+    need(g.name, "ar");
+    g.options.forEach(o=>need(o.name, "ar"));
+  });
+  if(!wanted.length) return 0;
+  try{ await translateToArabic(wanted); }catch(e){ return 0; }
+  let filled = 0;
+  slots.forEach(s=>{
+    const tr = TRANSLATE_CACHE.get(s.src);
+    if(tr && containsArabic(tr)){ s.obj[s.key] = tr; filled++; }
+  });
+  return filled;
+}
+
+function arabicCoverage(items){
+  if(!items.length) return "0%";
+  const ok = items.filter(it=>containsArabic(it.nameI18n && it.nameI18n.ar)).length;
+  return Math.round((ok/items.length)*100) + "%";
+}
+
+/* =========================================================================
+   POS WORKBOOK EXPORT  (identical schema to the reference files)
+   Sheet "Menu":      Category | Item Name | Size | Price | Description | Choice Groups
+   Sheet "Modifiers": Group Name | Option Name | Option Price | Old Price | Min | Max
+   Two files are produced from one extraction: an English workbook and an
+   Arabic workbook, row-for-row identical in structure.
+   ========================================================================= */
+const POS_MENU_HEADER = ["Category","Item Name","Size","Price","Description","Choice Groups"];
+const POS_MOD_HEADER  = ["Group Name","Option Name","Option Price","Old Price","Min","Max"];
+
+/* Build a shared modifier registry: identical group names holding different
+   option sets are disambiguated with " (2)", " (3)" … exactly like the
+   reference workbooks. Registry is keyed on the ENGLISH signature so both
+   language files stay perfectly aligned row-for-row. */
+
+/* Groups attached to an item, with a graceful fallback for datasets that only
+   exposed flat size/add-on lists. */
+function itemGroups(it){
+  const out = [];
+  const seen = new Set();
+  const add = group => {
+    if(!group || !Array.isArray(group.options) || !group.options.length) return;
+    const key = normalizeModifierKey(group.name && (group.name.en || group.name.ar)) + "|" +
+      group.options.map(o=>normalizeModifierKey(o.name && (o.name.en || o.name.ar)) + ":" + o.price).join(",");
+    if(seen.has(key)) return;
+    seen.add(key);
+    out.push(group);
+  };
+  (it.choiceGroups||[]).forEach(add);
+  const mk = (label, list, min, max)=>{
+    const options = (list||[]).filter(o=>o && o.name).map(o=>({
+      name:{ en:o.name, ar:o.name },
+      price: typeof o.price === "number" ? round2(o.price) : 0,
+      oldPrice: ""
+    }));
+    if(options.length) add({ name:{ en:label, ar:label }, min, max:Math.max(min, max || options.length), options });
+  };
+  if(!(it.choiceGroups||[]).some(g=>modifierKind(g.name && (g.name.en || g.name.ar))==="size")){
+    mk("Choose Your Size:", it.sizes, 1, 1);
+  }
+  if(!(it.choiceGroups||[]).some(g=>modifierKind(g.name && (g.name.en || g.name.ar))==="addon")){
+    mk("Add On's:", it.addons, 0, (it.addons||[]).length);
+  }
+  return out;
+}
+
+/* Return the labels written to the POS Menu sheet.  The source label wins
+   when it cannot be resolved; otherwise the exact registry label is used so
+   Menu.Choice Groups and Modifiers.Group Name are guaranteed to cross-link. */
+function itemGroupLabels(it, registry, lang){
+  const groups = itemGroups(it);
+  const labels = [];
+  const used = new Set();
+  const push = value => {
+    const text = cleanText(value);
+    if(text && labels.indexOf(text)===-1) labels.push(text);
+  };
+  const matchingGroups = label => groups.filter(g=>{
+    const names = [g.name && g.name.en, g.name && g.name.ar].filter(Boolean);
+    const target = normalizeModifierKey(label);
+    if(names.some(n=>{
+      const key = normalizeModifierKey(n);
+      return key && target && (key===target || key.includes(target) || target.includes(key));
+    })) return true;
+    const kind = modifierKind(label);
+    return !!kind && kind!=="options" && names.some(n=>modifierKind(n)===kind);
+  });
+
+  const explicit = (it.choiceGroupLabels||[]).filter(Boolean);
+  explicit.forEach(label=>{
+    const candidates = matchingGroups(label).filter(g=>!used.has(g));
+    if(candidates.length){
+      const g = candidates[0];
+      used.add(g);
+      push(registry ? registry.labelFor(g, lang) : posText(g.name, lang));
+    } else {
+      const kind = modifierKind(label);
+      const alreadyRepresented = kind && Array.from(used).some(g=>{
+        return modifierKind(g.name && (g.name.en || g.name.ar))===kind;
+      });
+      if(!alreadyRepresented) push(label);
+    }
+  });
+  groups.forEach(g=>{
+    if(used.has(g)) return;
+    push(registry ? registry.labelFor(g, lang) : posText(g.name, lang));
+  });
+  return labels;
+}
+
+function buildModifierRegistry(items){
+  const byKey = new Map();      // signature -> { n, name }
+  const byBase = new Map();     // base name -> count
+  const groups = [];            // ordered { group, n }
+  const sigOf = (g)=>{
+    const base = (g.name.en || g.name.ar || "Options").trim();
+    return base + "||" + g.min + "|" + g.max + "|" +
+      g.options.map(o=>(o.name.en||o.name.ar)+":"+o.price).join(",");
+  };
+  const buckets = items.map(it=>itemGroups(it).filter(g=>g.options && g.options.length));
+  if(State.orphanGroups && State.orphanGroups.length) buckets.push(State.orphanGroups);
+  buckets.forEach(bucket=>{
+    bucket.forEach(g=>{
+      const base = (g.name.en || g.name.ar || "Options").trim();
+      const sig = sigOf(g);
+      if(byKey.has(sig)) return;
+      const n = (byBase.get(base) || 0) + 1;
+      byBase.set(base, n);
+      byKey.set(sig, { n });
+      groups.push({ group: g, n });
+    });
+  });
+  /* Same disambiguation index in both files, but the label itself is written in
+     the workbook language so the Arabic file is fully Arabic while the Menu
+     sheet and the Modifiers sheet stay perfectly cross-referenced. */
+  const labelFor = (g, lang)=>{
+    const entry = byKey.get(sigOf(g));
+    const n = entry ? entry.n : 1;
+    const base = posText(g.name, lang || "en") || (g.name.en || g.name.ar || "Options").trim();
+    return n === 1 ? base : base + " (" + n + ")";
+  };
+  return { groups, labelFor };
+}
+
+/* Some sources ship one combined "English / Arabic" string. Split it so each
+   workbook carries only its own language. */
+function splitBilingual(str, lang){
+  const s = cleanText(str);
+  if(!s) return "";
+  const parts = s.split(/\s+\/\s+/);
+  if(parts.length === 2){
+    const [a, b] = parts;
+    const aAr = containsArabic(a), bAr = containsArabic(b);
+    if(aAr !== bAr) return lang === "ar" ? (aAr ? a : b) : (aAr ? b : a);
+  }
+  return s;
+}
+
+function posText(node, lang){
+  if(!node) return "";
+  const v = lang === "ar" ? (node.ar || node.en) : (node.en || node.ar);
+  return splitBilingual(v || "", lang);
+}
+
+function buildPosWorkbook(lang, registry){
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: lang === "ar" }] };
+
+  const menuRows = [POS_MENU_HEADER];
+  State.items.forEach(it=>{
+    const labels = itemGroupLabels(it, registry, lang);
+    menuRows.push([
+      posText(it.categoryI18n, lang) || splitBilingual(it.category || "", lang),
+      posText(it.nameI18n, lang) || splitBilingual(it.itemName || "", lang),
+      it.sizeLabel || "",
+      it.priceText !== undefined && it.priceText !== "" ? it.priceText : priceToText(it.price),
+      posText(it.descriptionI18n, lang) || splitBilingual(it.description || "", lang),
+      labels.join(" #")
+    ]);
+  });
+  const wsMenu = XLSX.utils.aoa_to_sheet(menuRows, { cellDates:false });
+  // Force Price + all text columns to string cells so "0.000" style values
+  // survive exactly as extracted (matching the reference workbooks).
+  for(let r=1;r<menuRows.length;r++){
+    for(let c=0;c<POS_MENU_HEADER.length;c++){
+      const addr = XLSX.utils.encode_cell({r,c});
+      const cell = wsMenu[addr];
+      if(cell){ cell.t = "s"; cell.v = String(cell.v ?? ""); }
+      else wsMenu[addr] = { t:"s", v:"" };
+    }
+  }
+  wsMenu["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:menuRows.length-1,c:POS_MENU_HEADER.length-1}});
+  wsMenu["!cols"] = [{wch:26},{wch:34},{wch:12},{wch:10},{wch:70},{wch:52}];
+  XLSX.utils.book_append_sheet(wb, wsMenu, "Menu");
+
+  const modRows = [POS_MOD_HEADER];
+  registry.groups.forEach(({group})=>{
+    const label = registry.labelFor(group, lang);
+    group.options.forEach(o=>{
+      modRows.push([
+        label,
+        posText(o.name, lang),
+        typeof o.price === "number" ? o.price : 0,
+        o.oldPrice === "" || o.oldPrice === null || o.oldPrice === undefined ? "" : o.oldPrice,
+        group.min,
+        group.max
+      ]);
+    });
+  });
+  const wsMod = XLSX.utils.aoa_to_sheet(modRows);
+  wsMod["!cols"] = [{wch:24},{wch:36},{wch:14},{wch:12},{wch:8},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, wsMod, "Modifiers");
+
+  return wb;
+}
+
+function posFilename(lang){
+  const base = sanitizeFilenamePart(State.restaurant.name || "menu").toLowerCase();
+  return base + "_" + lang + ".xlsx";
+}
+
+function exportPosWorkbooks(which){
+  if(!State.items.length){ toastMsg("No menu data to export yet.", "err"); return; }
+  try{
+    const registry = buildModifierRegistry(State.items);
+    const langs = which === "both" ? ["en","ar"] : [which];
+    langs.forEach((lang, i)=>{
+      const wb = buildPosWorkbook(lang, registry);
+      const name = posFilename(lang);
+      // stagger writes so browsers accept both downloads
+      setTimeout(()=> XLSX.writeFile(wb, name), i * 700);
+    });
+    const totalOptions = registry.groups.reduce((s,g)=>s+g.group.options.length,0);
+    toastMsg((which==="both" ? "English + Arabic workbooks" : (which==="ar" ? "Arabic workbook" : "English workbook")) +
+      " downloaded — " + State.items.length + " items, " + registry.groups.length + " modifier groups, " + totalOptions + " options.", "ok");
+  }catch(e){
+    console.error(e);
+    toastMsg("Export failed: " + e.message, "err");
+  }
+}
+
 /* =========================================================================
    HISTORY (localStorage)
    ========================================================================= */
@@ -1791,6 +2752,10 @@ function renderDebug(){
     ["Duplicates removed", d.duplicateCount],
     ["Categories detected", d.detectedCategories],
     ["Currency detected", d.detectedCurrency || "—"],
+    ["Modifier groups", d.modifierGroups || 0],
+    ["Modifier discovery", d.modifierSource || "—"],
+    ["Arabic content", d.arabicSource || "—"],
+    ["Arabic coverage", d.arabicCoverage || "—"],
   ];
   $("#debugContent").innerHTML = rows.map(([k,v])=>
     '<div class="debug-row"><span>'+escapeHtml(k)+'</span><b>'+escapeHtml(String(v))+'</b></div>'
@@ -1820,6 +2785,9 @@ function init(){
   $("#btnAddItem").addEventListener("click", addBlankItem);
 
   $("#btnExportXlsx").addEventListener("click", exportXlsx);
+  $("#btnExportPosEn").addEventListener("click", ()=> exportPosWorkbooks("en"));
+  $("#btnExportPosAr").addEventListener("click", ()=> exportPosWorkbooks("ar"));
+  $("#btnExportPosBoth").addEventListener("click", ()=> exportPosWorkbooks("both"));
   $("#btnExportCsv").addEventListener("click", exportCsv);
   $("#btnExportJson").addEventListener("click", exportJson);
 
@@ -1835,6 +2803,14 @@ function init(){
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+/* Internal handles for diagnostics / automated verification. */
+window.__LAITH__ = {
+  State, extractEmbeddedJsonBlobs, extractItemsFromBlobs, harvestFromSource,
+  attachModifierGroups, mergeArabicItems, buildModifierRegistry, buildPosWorkbook,
+  itemGroups, itemGroupLabels, mapRawItem, collectChoiceGroups, collectChoiceGroupLabels,
+  arabicUrlVariants, arabicCoverage, dropModifierEchoes
+};
 })();
 </script>
 </body>
