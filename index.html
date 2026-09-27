@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Laith Arabiat AI Menu v6 — Talabat Menu to Excel</title>
+<title>Laith Arabiat AI Menu v7 — Talabat Menu to Excel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Kufi+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -728,6 +728,84 @@ function normalizeInputUrl(raw){
 }
 
 /* =========================================================================
+   TALABAT AREA-ID RESOLVER  (root cause of "only one link works")
+   A Talabat restaurant link without an ?aid= (delivery area id) answers with
+   HTTP 307 to the country home page, so the menu payload is never returned.
+   The single link that used to work simply carried ?aid=1439 already.
+   This layer attaches a valid area id automatically: known ids per country
+   first, then ids discovered live from the country page, until the page
+   actually returns the server-rendered menu payload.
+   ========================================================================= */
+const TALABAT_DEFAULT_AIDS = {
+  uae:[1439,1169,1170,1171], kuwait:[2,3,4], ksa:[110,111,112],
+  bahrain:[993,994,995], oman:[1376,1377,1378], qatar:[1616,1623,1624],
+  jordan:[4809,4818,4820], egypt:[6963,6964,6965], iraq:[]
+};
+const TALABAT_AID_CACHE = {};
+
+function isTalabatUrl(u){
+  try{ return /(^|\.)talabat\.com$/i.test(new URL(u).hostname); }catch(e){ return false; }
+}
+function withAid(url, aid){
+  try{ const u = new URL(url); u.searchParams.set("aid", String(aid)); return u.href; }catch(e){ return url; }
+}
+/* Read live area ids straight from the country landing page. */
+async function discoverTalabatAids(country){
+  if(!country) return [];
+  if(TALABAT_AID_CACHE[country]) return TALABAT_AID_CACHE[country];
+  const out = [];
+  try{
+    const html = await relayFetchText("https://www.talabat.com/" + country, "en", 25000);
+    const re = new RegExp("/" + country + "/restaurants/(\\d+)[/\"']", "g");
+    let m;
+    while((m = re.exec(html||"")) && out.length < 8){ if(out.indexOf(m[1]) === -1) out.push(m[1]); }
+  }catch(e){}
+  TALABAT_AID_CACHE[country] = out;
+  return out;
+}
+/* Fetch the restaurant page with a working area id. Returns the fetch result
+   plus the URL that actually produced a menu, or null when none did. */
+async function fetchTalabatMenuPage(normalized){
+  const tried = [];
+  const country = (normalized.country || "").toLowerCase();
+  const base = normalized.normalizedUrl;
+  let urlAid = "";
+  try{ urlAid = new URL(base).searchParams.get("aid") || ""; }catch(e){}
+
+  const seen = new Set();
+  const queue = [];
+  const push = aid => {
+    const href = aid ? withAid(base, aid) : base;
+    if(!seen.has(href)){ seen.add(href); queue.push(href); }
+  };
+  if(urlAid) push(urlAid);
+  (TALABAT_DEFAULT_AIDS[country] || []).forEach(push);
+
+  const tryUrl = async (href)=>{
+    const r = await attemptFetchRound(href, tried, 1);
+    if(r && r.ok && r.html && extractPrimaryMenuItems(r.html).length){
+      r.tried = tried; r.resolvedUrl = href; return r;
+    }
+    return null;
+  };
+
+  for(const href of queue){
+    const hit = await tryUrl(href);
+    if(hit) return hit;
+  }
+  // Nothing known worked — discover real area ids from the country page.
+  const discovered = await discoverTalabatAids(country);
+  for(const aid of discovered){
+    const href = withAid(base, aid);
+    if(seen.has(href)) continue;
+    seen.add(href);
+    const hit = await tryUrl(href);
+    if(hit) return hit;
+  }
+  return null;
+}
+
+/* =========================================================================
    EXTRACTION ENGINE
    Strategy 1: direct fetch (will usually fail due to CORS — handled honestly)
    Strategy 2: parse embedded structured data (JSON-LD / __NEXT_DATA__ / state blobs)
@@ -746,7 +824,7 @@ function normalizeInputUrl(raw){
    ------------------------------------------------------------------ */
 
 // Hosted reader endpoint (works from a downloaded file too).
-const READER_API = "https://project--85ea9fea-2fd0-4672-a513-7b22fd6357da-dev.lovable.app/api/public/scrape";
+const READER_API = "https://project--a94faa43-8e38-4eee-9e9a-46a27c7a0912.lovable.app/api/public/fetch";
 
 function readerBases(){
   const bases = [];
@@ -760,8 +838,8 @@ function readerBases(){
 }
 
 const FETCH_ROUTES = [
-  "https://project--ce11bd83-e944-463a-ad52-de4372d80531.lovable.app/api/public/fetch",
-  "https://project--ce11bd83-e944-463a-ad52-de4372d80531-dev.lovable.app/api/public/fetch",
+  "https://project--a94faa43-8e38-4eee-9e9a-46a27c7a0912.lovable.app/api/public/fetch",
+  "https://project--a94faa43-8e38-4eee-9e9a-46a27c7a0912-dev.lovable.app/api/public/fetch",
   "http://localhost:8080/api/public/fetch"
 ].map((base, i) => ({
   label: "relay" + (i ? i + 1 : ""),
@@ -1519,6 +1597,7 @@ function mapRawItem(raw, fallbackCategory, catIndex){
     priceSource: resolvedPrice.source,
     discountedPrice: resolvedPrice.source === "original" ? resolvedPrice.currentValue : null,
     sizeLabel: cleanText(readName(pick(raw, ["size","sizeName","portion","variantName"]) || "")),
+    hasChoices: !!pick(raw, ["hasChoices","icc","hasChoice","hasModifiers"]),
     choiceGroups: collectChoiceGroups(raw),
      choiceGroupLabels: collectChoiceGroupLabels(raw),
     subCategory: readName(pick(raw,["subCategory","subcategory","subSection"]) || ""),
@@ -1758,7 +1837,19 @@ async function analyzeUrl(rawUrl){
 
   await runStage(1, async ()=>{ State.restaurant.country = normalized.country; });
 
-  let fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
+  let fetchResult = null;
+  if(isTalabatUrl(normalized.normalizedUrl)){
+    fetchResult = await runStage(2, async ()=> fetchTalabatMenuPage(normalized));
+    if(fetchResult && fetchResult.resolvedUrl && fetchResult.resolvedUrl !== normalized.normalizedUrl){
+      normalized.normalizedUrl = fetchResult.resolvedUrl;
+      State.debug.normalizedUrl = fetchResult.resolvedUrl;
+      State.debug.warnings.push("Delivery area id added automatically: " + fetchResult.resolvedUrl);
+      renderDebug();
+    }
+  }
+  if(!fetchResult || !fetchResult.ok){
+    fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
+  }
   if(runId !== analyzeRunId) return;
   for(let extra = 0; extra < 2 && fetchResult.ok && countQuickItems(fetchResult.html) === 0; extra++){
     await sleepMs(2000);
@@ -2473,8 +2564,8 @@ function harvestFromSource(blobs, source){
    tried on the published address first, then the preview build, then a local
    dev server, and the first one that answers is reused for the whole run. */
 const MENUX_RELAYS = [
-  "https://project--ce11bd83-e944-463a-ad52-de4372d80531.lovable.app/api/public/fetch",
-  "https://project--ce11bd83-e944-463a-ad52-de4372d80531-dev.lovable.app/api/public/fetch",
+  "https://project--a94faa43-8e38-4eee-9e9a-46a27c7a0912.lovable.app/api/public/fetch",
+  "https://project--a94faa43-8e38-4eee-9e9a-46a27c7a0912-dev.lovable.app/api/public/fetch",
   "http://localhost:8080/api/public/fetch"
 ];
 let MENUX_RELAY = "";
@@ -2520,6 +2611,15 @@ async function relayFetchTextOnce(url, lang, ms){
   const t = setTimeout(()=>controller.abort(), ms || 20000);
   try{
     if(base === JINA_RELAY){
+      /* Public fallbacks, in order: allorigins (returns the raw body, which
+         is what JSON endpoints need), then the jina reader. */
+      try{
+        const ao = await fetch("https://api.allorigins.win/raw?url=" + encodeURIComponent(url), { signal: controller.signal });
+        if(ao.ok){
+          const txt = await ao.text();
+          if(txt && txt.length > 20 && !/<title>5\d\d /i.test(txt)){ clearTimeout(t); return txt; }
+        }
+      }catch(e){ /* fall through to the reader */ }
       const r = await fetch(jinaUrl(url), { signal: controller.signal, headers: { "Accept": "text/plain" } });
       clearTimeout(t);
       if(!r.ok) return "";
@@ -2598,9 +2698,33 @@ function parseChoicePayload(payload){
     });
   };
 
+  /* Nested option groups: an option can open its own sections
+     (choices[].choices[].subCategories[]). They are emitted as their own
+     groups so nothing is silently dropped from the Modifiers sheet. */
+  const addSection = (sec, prefix)=>{
+    if(!sec || typeof sec !== "object") return;
+    const label = cleanText(String(sec.sectionName || sec.name || sec.title || sec.nm || ""));
+    addGroup(prefix ? (prefix + " — " + (label || "Options")) : label,
+      sec.minQuantity ?? sec.mnq, sec.maxQuantity ?? sec.mxq,
+      (sec.choices || sec.items || sec.options || sec.ich || []).map(c=>({
+        ...(c && typeof c === "object" ? c : {}),
+        name:c && (c.name||c.title||c.label||c.nm),
+        price:c && (c.price ?? c.amount ?? c.extraPrice ?? c.optionPrice ?? c.pr),
+        oldPrice:c && (c.oldPrice ?? c.originalPrice ?? c.opr ?? c.op)
+      })));
+    (sec.choices || sec.ich || []).forEach(opt=>{
+      const subs = opt && (opt.subCategories || opt.subCategory || opt.subChoices);
+      if(Array.isArray(subs) && subs.length){
+        const optName = cleanText(String((opt.name || opt.nm) || ""));
+        subs.forEach(sub=>addSection(sub, (label ? label + " / " : "") + optName));
+      }
+    });
+  };
+
   // friendly shape: { choices:[ { sectionName, minQuantity, maxQuantity, choices:[{name,price}] } ] }
   if(Array.isArray(payload.choices)){
-    payload.choices.forEach(sec=>{
+    payload.choices.forEach(sec=>{ addSection(sec, ""); });
+    [].forEach(sec=>{
       if(!sec || typeof sec !== "object") return;
       addGroup(sec.sectionName || sec.name || sec.title, sec.minQuantity, sec.maxQuantity,
         (sec.choices||sec.items||sec.options||[]).map(c=>({
@@ -2651,11 +2775,15 @@ async function fetchLiveChoices(items, pageUrl, pageHtml, onTick){
   report.relay = await pickRelay();
   if(!report.relay) return report;
 
-  const targets = items.filter(it=>/^\d{5,}$/.test(String(it.sourceId||"")));
+  let targets = items.filter(it=>/^\d{5,}$/.test(String(it.sourceId||"")));
+  /* Talabat marks dishes that actually carry option groups; querying only
+     those makes the run several times faster and far more reliable. */
+  const flagged = targets.filter(it=>it.hasChoices);
+  if(flagged.length) targets = flagged;
   if(!targets.length) return report;
 
   const viaReader = report.relay === JINA_RELAY;   // public reader is rate limited
-  const CONC = viaReader ? 3 : 6, BUDGET = viaReader ? 220000 : 150000, started = Date.now();
+  const CONC = viaReader ? 3 : 8, BUDGET = viaReader ? 240000 : 240000, started = Date.now();
   let cursor = 0, consecutiveFailures = 0;
 
   const worker = async ()=>{
