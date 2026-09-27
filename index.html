@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Laith Arabiat AI Menu — Talabat Menu to Excel</title>
+<title>Laith Arabiat AI Menu v6 — Talabat Menu to Excel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Kufi+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -522,6 +522,8 @@ const State = {
   }
 };
 let itemIdCounter = 1;
+let analyzeRunId = 0;
+let analysisInProgress = false;
 
 /* =========================================================================
    UTILITIES
@@ -593,36 +595,51 @@ function detectCurrency(str){
   return "";
 }
 
-/* Parse a raw price string/number into { value, currency } */
+/* Parse a raw price without changing its published decimal precision. */
 function parsePriceValue(raw){
-  if(raw===null||raw===undefined) return { value:null, currency:"" };
-  if(typeof raw === "number") return { value: round2(raw), currency:"" };
-  let s = String(raw).trim();
-  const currency = detectCurrency(s);
-  s = s.replace(/[^\d.,\-]/g, ""); // strip letters/symbols
-  if(!s) return { value:null, currency };
-  // normalize thousand/decimal separators: assume last separator is decimal if both present
-  if(s.indexOf(",")>-1 && s.indexOf(".")>-1){
-    if(s.lastIndexOf(",") > s.lastIndexOf(".")){ s = s.replace(/\./g,"").replace(",", "."); }
-    else { s = s.replace(/,/g,""); }
-  } else if(s.indexOf(",")>-1){
-    // single comma - likely decimal in some locales, or thousands. Assume thousands if 3 digits follow.
-    const parts = s.split(",");
-    if(parts[parts.length-1].length===3){ s = s.replace(/,/g,""); } else { s = s.replace(",", "."); }
+  if(raw===null||raw===undefined||raw==="") return { value:null, currency:"", text:"" };
+  if(typeof raw === "object"){
+    const nested = pick(raw, ["value","amount","price","total","formatted","text","displayValue","displayPrice","rawValue"]);
+    if(nested===undefined) return { value:null, currency:"", text:"" };
+    return parsePriceValue(nested);
   }
-  const num = parseFloat(s);
-  return { value: isNaN(num) ? null : round2(num), currency };
+  const source = String(raw).trim();
+  const currency = detectCurrency(source);
+  let s = source.replace(/[^\d.,\-]/g, "");
+  if(!s) return { value:null, currency, text:"" };
+  const negative = s.startsWith("-");
+  s = s.replace(/-/g, "");
+  if(s.includes(",") && s.includes(".")){
+    if(s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(/,/g, ".");
+    else s = s.replace(/,/g, "");
+  } else if(s.includes(",")){
+    const parts = s.split(",");
+    const decimals = parts[parts.length-1].length;
+    const isThreeDecimalCurrency = /^(KWD|BHD|OMR)$/.test(currency);
+    const isClearlyDecimal = parts.length===2 && (decimals!==3 || parts[0]==="0" || isThreeDecimalCurrency);
+    s = isClearlyDecimal ? parts.join(".") : parts.join("");
+  }
+  s = (negative ? "-" : "") + s;
+  const num = Number(s);
+  return { value: Number.isFinite(num) ? num : null, currency, text:Number.isFinite(num) ? s : "" };
 }
-function round2(n){ return Math.round(n*100)/100; }
+function round2(n){ return Math.round((Number(n) + Number.EPSILON)*100)/100; }
+function exactPriceText(raw, parsed){
+  const p = parsed || parsePriceValue(raw);
+  if(p && p.text) return p.text;
+  if(p && p.value!==null && p.value!==undefined && Number.isFinite(Number(p.value))) return String(p.value);
+  return "";
+}
 
 /* Prefer the published pre-discount/list price whenever the menu exposes one.
    Delivery platforms use several field names and sometimes nest both values
    inside a price object, so price selection is centralized here. */
 const ORIGINAL_PRICE_KEYS = [
-  "oldPrice","originalPrice","priceBeforeDiscount","beforeDiscountPrice",
-  "regularPrice","listPrice","fullPrice","undiscountedPrice","previousPrice",
-  "crossedOutPrice","strikethroughPrice","strikeThroughPrice","wasPrice",
-  "originalAmount","regularAmount","baseAmount"
+  "oldPrice","old_price","originalPrice","original_price","priceBeforeDiscount","price_before_discount","beforeDiscountPrice","before_discount_price",
+  "regularPrice","regular_price","listPrice","list_price","fullPrice","full_price","undiscountedPrice","undiscounted_price","previousPrice","previous_price",
+  "crossedOutPrice","crossed_out_price","strikethroughPrice","strikeThroughPrice","strike_price","wasPrice","was_price",
+  "originalAmount","original_amount","regularAmount","regular_amount","baseAmount","base_amount","compareAtPrice","compare_at_price",
+  "preDiscountPrice","pre_discount_price","retailPrice","retail_price","standardPrice","standard_price","oldAmount","old_amount","opr","op"
 ];
 const CURRENT_PRICE_KEYS = [
   "price","amount","cost","unitPrice","finalPrice","displayPrice","basePrice",
@@ -792,15 +809,68 @@ async function fetchOnce(target, ms){
 /* Try every route in order and keep the first payload that actually
    contains priced menu content; otherwise keep the largest payload. */
 function payloadHasMenu(html){
-  if(!html) return false;
-  if(/"items"\s*:\s*\[\s*\{[\s\S]{0,4000}?"price"/.test(html)) return true;
-  if(/"(menuData|menuItems|menuSections|initialMenuState)"/.test(html) && /"price"\s*:/.test(html)) return true;
-  // Readable-text routes (jina): "Name ... 12.50"
-  const priceLines = (html.match(/\d+[.,]\d{1,2}/g) || []).length;
-  return priceLines > 12;
+  return payloadMenuScore(html) > 0;
 }
 
-async function attemptDirectFetch(url){
+/* A long response is not necessarily a menu: proxy error pages, bot checks,
+   and translation bundles can all be much larger than the actual payload.
+   Score only records that our own parser can turn into named, priced dishes. */
+function payloadMenuScore(html){
+  if(!html || html.length < 500) return 0;
+  try{
+    const primary = extractPrimaryMenuItems(html);
+    if(primary.length) return primary.length * 1000;
+    const parsed = extractItemsFromBlobs(extractEmbeddedJsonBlobs(html));
+    const valid = parsed.filter(isUsableMenuItem).length;
+    if(valid) return valid * 100;
+    return extractItemsFromText(html).filter(isUsableMenuItem).length;
+  }catch(e){ return 0; }
+}
+
+function isUsableMenuItem(it){
+  if(!it || !cleanText(it.itemName || it.name || it.title || "")) return false;
+  const value = it.price !== undefined ? it.price : pick(it, CURRENT_PRICE_KEYS.concat(ORIGINAL_PRICE_KEYS));
+  return parsePriceValue(value).value !== null;
+}
+
+const sleepMs = ms => new Promise(r=>setTimeout(r, ms));
+function bustCache(target, label){
+  if(label === "jina" || label === "direct") return target;
+  return target + (target.indexOf("?") >= 0 ? "&" : "?") + "_mx=" + Date.now() + Math.random().toString(36).slice(2,7);
+}
+async function attemptDirectFetch(url, skipBest){
+  const tried = [];
+  let best = null;
+  let bestScore = 0;
+  for(let round = 1; round <= 3; round++){
+    const res = await attemptFetchRound(url, tried, round);
+    if(res && res.menu){ res.tried = tried; return res; }
+    if(res){
+      const score = payloadMenuScore(res.html);
+      if(!best || score > bestScore){ best = res; bestScore = score; }
+    }
+    await sleepMs(1200 * round);
+  }
+  if(best && bestScore > 0 && !skipBest){ best.tried = tried; best.menuScore = bestScore; return best; }
+  return { ok:false, reason: tried.join(" | "), tried };
+}
+async function attemptFetchRound(url, tried, round){
+  let best = null;
+  let bestScore = 0;
+  for(const route of FETCH_ROUTES){
+    const r = await fetchOnce(bustCache(route.build(url), route.label), route.timeout || 12000);
+    const score = r.ok ? payloadMenuScore(r.html) : 0;
+    tried.push("R" + round + " " + route.label + ":" + (r.ok ? (r.html.length + "b/" + score + "q") : r.reason));
+    if(r.ok){
+      if(score > bestScore){ best = r; bestScore = score; best.route = route.label; best.menuScore = score; }
+      /* A structured primary menu is authoritative and needs no weaker relay. */
+      if(score >= 10000){ best.menu = true; return best; }
+    }
+  }
+  if(bestScore > 0) best.menu = true;
+  return best;
+}
+async function attemptDirectFetchLegacy(url){
   const tried = [];
   let best = null;
   for(const route of FETCH_ROUTES){
@@ -1172,12 +1242,8 @@ function readBilingual(raw, baseKeys){
 }
 
 function priceToText(value, rawValue){
-  if(typeof rawValue === "string"){
-    const s = rawValue.trim().replace(/[^\d.,-]/g,"").replace(/,/g,"");
-    if(s && /^\d+(\.\d+)?$/.test(s)) return s;
-  }
-  if(value===null || value===undefined || isNaN(value)) return "";
-  return String(round2(value));
+  const parsed = parsePriceValue(rawValue!==undefined ? rawValue : value);
+  return exactPriceText(rawValue, parsed);
 }
 
 const CHOICE_GROUP_KEYS = ["choices","choiceGroups","choiceGroup","modifierGroups","modifiers","optionGroups",
@@ -1272,17 +1338,18 @@ function normalizeChoiceGroup(node){
     if(typeof o === "string") return { name:{en:cleanText(o), ar:cleanText(o)}, price:0, oldPrice:"" };
     if(!o || typeof o !== "object") return null;
     const nm = readBilingual(o, ["name","title","label","optionName","displayName"]);
-    let pv = pick(o, ["price","amount","extraPrice","optionPrice","unitPrice","value"]);
-    if(pv && typeof pv === "object") pv = pick(pv, ["value","amount","price","total"]) ?? "";
-    let ov = pick(o, ["oldPrice","originalPrice","priceBeforeDiscount","basePrice"]);
-    if(ov && typeof ov === "object") ov = pick(ov, ["value","amount","price"]) ?? "";
+    let pv = pick(o, ["price","amount","extraPrice","extra_price","optionPrice","option_price","unitPrice","unit_price","value","pr"]);
+    if(pv && typeof pv === "object") pv = unwrapPriceCandidate(pv) ?? "";
+    const ov = findOriginalPrice(o);
     const parsed = parsePriceValue(pv);
     const parsedOld = parsePriceValue(ov);
     if(!nm.en && !nm.ar) return null;
     return {
       name: nm,
-      price: parsed.value === null ? 0 : round2(parsed.value),
-      oldPrice: parsedOld.value === null || parsedOld.value === 0 ? "" : round2(parsedOld.value)
+      price: parsed.value === null ? 0 : parsed.value,
+      priceText: parsed.value === null ? "0" : exactPriceText(pv, parsed),
+      oldPrice: parsedOld.value === null ? "" : parsedOld.value,
+      oldPriceText: parsedOld.value === null ? "" : exactPriceText(ov, parsedOld)
     };
   }).filter(Boolean);
   if(!options.length) return null;
@@ -1337,10 +1404,18 @@ function collectChoiceGroups(raw){
         return { name:{en:cleanText(o), ar:cleanText(o)}, price:0, oldPrice:"" };
       }
       const nm = readBilingual(o, ["name","title","label","optionName","displayName"]);
-      let pv = pick(o, ["price","amount","extraPrice","optionPrice","unitPrice","value"]);
-      if(pv && typeof pv === "object") pv = pick(pv, ["value","amount","price","total"]) ?? "";
+      let pv = pick(o, ["price","amount","extraPrice","extra_price","optionPrice","option_price","unitPrice","unit_price","value","pr"]);
+      if(pv && typeof pv === "object") pv = unwrapPriceCandidate(pv) ?? "";
+      const ov = findOriginalPrice(o);
       const parsed = parsePriceValue(pv);
-      return { name:nm, price:parsed.value===null ? 0 : round2(parsed.value), oldPrice:"" };
+      const parsedOld = parsePriceValue(ov);
+      return {
+        name:nm,
+        price:parsed.value===null ? 0 : parsed.value,
+        priceText:parsed.value===null ? "0" : exactPriceText(pv, parsed),
+        oldPrice:parsedOld.value===null ? "" : parsedOld.value,
+        oldPriceText:parsedOld.value===null ? "" : exactPriceText(ov, parsedOld)
+      };
     }).filter(o=>o.name.en || o.name.ar);
     const resolvedMax = max > 0 ? max : options.length;
     const group = {
@@ -1457,6 +1532,26 @@ function mapRawItem(raw, fallbackCategory, catIndex){
     addons: toOptionList(addonsRaw),
     notes: ""
   };
+}
+
+/* Talabat's canonical server-rendered payload. Reading this exact branch
+   avoids scanning translation dictionaries and duplicated category copies. */
+function extractPrimaryMenuItems(html){
+  try{
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const script = doc.querySelector("#__NEXT_DATA__");
+    if(!script || !script.textContent) return [];
+    const data = JSON.parse(script.textContent);
+    const menuData = data && data.props && data.props.pageProps &&
+      data.props.pageProps.initialMenuState && data.props.pageProps.initialMenuState.menuData;
+    if(!menuData || !Array.isArray(menuData.items)) return [];
+    const catIndex = new Map();
+    buildCategoryIndex(menuData, catIndex, 0, new Set());
+    return menuData.items.map(raw=>{
+      const fallback = readName(raw.sectionName || raw.originalSection || "");
+      return mapRawItem(raw, fallback, catIndex);
+    }).filter(isUsableMenuItem);
+  }catch(e){ return []; }
 }
 
 /* Walk all discovered JSON blobs and produce a flat list of normalized items. */
@@ -1637,7 +1732,16 @@ async function runStage(i, fn){
 }
 
 /* Main orchestration entry point */
+function countQuickItems(html){
+  try{
+    let n = extractItemsFromBlobs(extractEmbeddedJsonBlobs(html)).length;
+    if(!n) n = extractItemsFromDom(html).length;
+    if(!n) n = extractItemsFromText(html).length;
+    return n;
+  }catch(e){ return 0; }
+}
 async function analyzeUrl(rawUrl){
+  const runId = ++analyzeRunId;
   resetErrorAndFallback();
   showSection("processing");
   renderStageList();
@@ -1654,7 +1758,13 @@ async function analyzeUrl(rawUrl){
 
   await runStage(1, async ()=>{ State.restaurant.country = normalized.country; });
 
-  const fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
+  let fetchResult = await runStage(2, async ()=> attemptDirectFetch(normalized.normalizedUrl));
+  if(runId !== analyzeRunId) return;
+  for(let extra = 0; extra < 2 && fetchResult.ok && countQuickItems(fetchResult.html) === 0; extra++){
+    await sleepMs(2000);
+    const again = await attemptDirectFetch(normalized.normalizedUrl);
+    if(again.ok && countQuickItems(again.html) > 0){ fetchResult = again; break; }
+  }
 
   if(!fetchResult.ok){
     State.debug.extractionMethod = "fetch failed: " + fetchResult.reason;
@@ -1669,8 +1779,13 @@ async function analyzeUrl(rawUrl){
 
   // Strategy 2 + 3: embedded structured data, then generic pattern search
   const blobs = await runStage(3, async ()=> extractEmbeddedJsonBlobs(fetchResult.html));
-  let rawItems = await runStage(4, async ()=> extractItemsFromBlobs(blobs));
-  let method = "structured data via " + (fetchResult.route||"fetch");
+  let rawItems = await runStage(4, async ()=> extractPrimaryMenuItems(fetchResult.html));
+  let method = "primary menu payload via " + (fetchResult.route||"fetch");
+
+  if(!rawItems.length){
+    rawItems = extractItemsFromBlobs(blobs);
+    method = "structured data via " + (fetchResult.route||"fetch");
+  }
 
   // Strategy 4: read the rendered page text itself
   if(!rawItems.length){
@@ -1719,6 +1834,7 @@ async function analyzeUrl(rawUrl){
   });
 
   const cleaned = await runStage(5, async ()=> localNormalizeDataset(rawItems));
+  if(runId !== analyzeRunId) return;
 
   // Stage 6 — deep modifier harvesting straight from the page source code.
   await runStage(6, async ()=>{
@@ -1786,10 +1902,21 @@ async function analyzeUrl(rawUrl){
 
   await runStage(9, async ()=>{});
 
-  State.debug.normalizedRecordCount = cleaned.items.length;
+  if(runId !== analyzeRunId) return;
+  const exportable = cleaned.items.filter(it=>!isExcludedCategory(it) && isUsableMenuItem(it));
+  if(!exportable.length){
+    State.items = [];
+    State.categories = [];
+    showSection("error");
+    setError("No complete menu data was received",
+      "The source returned a partial page, so no Excel file was created. Please try the same link again; incomplete responses are now rejected instead of producing an empty workbook.");
+    return;
+  }
+
+  State.debug.normalizedRecordCount = exportable.length;
   State.debug.duplicateCount = cleaned.duplicates;
   State.isDemo = false;
-  finalizeDataset(cleaned.items);
+  finalizeDataset(exportable);
 }
 
 function handleValidationError(normalized){
@@ -1835,8 +1962,28 @@ async function loadDemo(){
   finalizeDataset(demo.items);
 }
 
+/* Promotional sections ("Offers", "Picks for you" …) only repeat dishes that
+   already live in their real categories, so they are never extracted. */
+const EXCLUDED_CATEGORY_RE = /^(offers?|special offers?|deals?|picks? for you|top picks|our picks|عروض|العروض|عروض خاصة|العروض الخاصة|مختارات لك|اخترنا لك|اختيارات لك|مقترحات لك)$/i;
+function isExcludedCategory(it){
+  const names = [it.category, it.categoryI18n && it.categoryI18n.en, it.categoryI18n && it.categoryI18n.ar];
+  return names.some(n=>{
+    const t = cleanText(String(n||"")).replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu,"").replace(/[:!.\-–—]+$/,"").trim();
+    return t && EXCLUDED_CATEGORY_RE.test(t);
+  });
+}
 function finalizeDataset(items){
+  const removed = items.filter(isExcludedCategory).length;
+  items = items.filter(it=>!isExcludedCategory(it));
+  if(removed) State.debug.warnings && State.debug.warnings.push(removed + " items from Offers / Picks for you were skipped.");
   State.items = items;
+  if(!State.items.length){
+    State.categories = [];
+    showSection("error");
+    setError("No complete menu data was received",
+      "The menu response was incomplete. Nothing was exported; please retry the same link.");
+    return;
+  }
   const catMap = new Map();
   items.forEach(it=>{ catMap.set(it.category, (catMap.get(it.category)||0)+1); });
   State.categories = Array.from(catMap.entries()).map(([name,count])=>({name,count}));
@@ -2358,6 +2505,15 @@ async function pickRelay(){
 }
 
 async function relayFetchText(url, lang, ms){
+  for(let a = 0; a < 3; a++){
+    const t = await relayFetchTextOnce(url, lang, ms);
+    if(t) return t;
+    if(a === 0 && MENUX_RELAY === JINA_RELAY) MENUX_RELAY = "";   // re-probe real relays
+    await sleepMs(800 * (a + 1));
+  }
+  return "";
+}
+async function relayFetchTextOnce(url, lang, ms){
   const base = await pickRelay();
   if(!base) return "";
   const controller = new AbortController();
@@ -2392,6 +2548,9 @@ function talabatContext(pageUrl, pageHtml){
   let p; try{ p = new URL(pageUrl); }catch(e){ return null; }
   if(!/(^|\.)talabat\.com$/i.test(p.hostname)) return null;
   let branch = "";
+  /* The public URL id can differ from the branch id returned in page data.
+     The choices endpoint requires the URL/vendor id (684184 in the sample),
+     while initialMenuState.restaurant.id may describe a delivery branch. */
   const m = p.pathname.match(/\/restaurant\/(\d+)/);
   if(m) branch = m[1];
   if(!branch){
@@ -2415,12 +2574,23 @@ function parseChoicePayload(payload){
     const options = (opts||[]).map(o=>{
       const nm = cleanText(String(o.name||""));
       if(!nm) return null;
-      const price = Number(o.price);
-      return { name:{ en:nm, ar:nm }, price: isNaN(price) ? 0 : round2(price), oldPrice:"" };
+      const rawPrice = o.price ?? o.amount ?? o.extraPrice ?? o.optionPrice ?? o.pr;
+      const rawOld = o.oldPrice ?? o.originalPrice ?? o.priceBeforeDiscount ?? o.beforeDiscountPrice ?? o.regularPrice ?? o.listPrice ?? o.wasPrice ?? o.compareAtPrice ?? o.opr ?? o.op;
+      const price = parsePriceValue(rawPrice);
+      const old = parsePriceValue(rawOld);
+      const hasPublishedOldPrice = old.value !== null && old.value >= 0;
+      return {
+        name:{ en:nm, ar:nm },
+        price: price.value === null ? 0 : price.value,
+        priceText: price.value === null ? "0" : exactPriceText(rawPrice, price),
+        oldPrice: hasPublishedOldPrice ? old.value : "",
+        oldPriceText: hasPublishedOldPrice ? exactPriceText(rawOld, old) : ""
+      };
     }).filter(Boolean);
     if(!options.length) return;
     const gname = cleanText(String(name||"")) || "Options";
     groups.push({
+      live: true,
       name:{ en:gname, ar:gname },
       min: Math.max(0, Number(min)||0),
       max: Math.max(0, Number(max)||options.length),
@@ -2433,7 +2603,12 @@ function parseChoicePayload(payload){
     payload.choices.forEach(sec=>{
       if(!sec || typeof sec !== "object") return;
       addGroup(sec.sectionName || sec.name || sec.title, sec.minQuantity, sec.maxQuantity,
-        (sec.choices||sec.items||[]).map(c=>({ name:c && (c.name||c.title), price:c && c.price })));
+        (sec.choices||sec.items||sec.options||[]).map(c=>({
+          ...(c && typeof c === "object" ? c : {}),
+          name:c && (c.name||c.title||c.label),
+          price:c && (c.price ?? c.amount ?? c.extraPrice ?? c.optionPrice ?? c.pr),
+          oldPrice:c && (c.oldPrice ?? c.old_price ?? c.originalPrice ?? c.original_price ?? c.priceBeforeDiscount ?? c.beforeDiscountPrice ?? c.regularPrice ?? c.listPrice ?? c.wasPrice ?? c.compareAtPrice ?? c.opr ?? c.op)
+        })));
     });
   }
 
@@ -2442,7 +2617,11 @@ function parseChoicePayload(payload){
   if(Array.isArray(cfi)){
     cfi.forEach(entry=>{
       (entry && entry.choiceSections || []).forEach(sec=>{
-        addGroup(sec.nm, sec.mnq, sec.mxq, (sec.ich||[]).map(c=>({ name:c && c.nm, price:c && c.pr })));
+        addGroup(sec.nm, sec.mnq, sec.mxq, (sec.ich||[]).map(c=>({
+          ...(c && typeof c === "object" ? c : {}),
+          name:c && (c.nm||c.name), price:c && (c.pr ?? c.price ?? c.amount),
+          oldPrice:c && (c.opr ?? c.op ?? c.oldPrice ?? c.originalPrice ?? c.priceBeforeDiscount ?? c.regularPrice)
+        })));
       });
     });
   }
@@ -2717,6 +2896,8 @@ function attachModifierGroups(items, acc){
   }));
 
   items.forEach(it=>{
+    /* The per-item endpoint is the ground truth: never mix guessed groups in. */
+    if((it.choiceGroups||[]).some(g=>g.live)) return;
     const found = [];
     // 2) item -> group, by the ids the item record references
     (it.refIds||[]).forEach(r=>{
@@ -2732,16 +2913,9 @@ function attachModifierGroups(items, acc){
     labels.forEach(label=>{
       const exact = acc.list.filter(e=>(e.aliases||[]).some(a=>{
         const x = normalizeModifierKey(a), y = normalizeModifierKey(label);
-        return x && y && (x===y || x.includes(y) || y.includes(x));
+        return x && y && x===y;
       }));
-      if(exact.length){
-        exact.forEach(e=>{ if(found.indexOf(e)===-1) found.push(e); });
-        return;
-      }
-      const kind = modifierKind(label);
-      if(!kind) return;
-      const candidates = acc.list.filter(e=>(e.aliases||[]).some(a=>modifierKind(a)===kind));
-      if(candidates.length===1 && found.indexOf(candidates[0])===-1) found.push(candidates[0]);
+      exact.forEach(e=>{ if(found.indexOf(e)===-1) found.push(e); });
     });
 
     /* 4) direct groups extracted from the item itself can be matched to a
@@ -2749,7 +2923,8 @@ function attachModifierGroups(items, acc){
     (it.choiceGroups||[]).forEach(local=>{
       const localNames = [local.name && local.name.en, local.name && local.name.ar].filter(Boolean);
       acc.list.forEach(e=>{
-        if(localNames.some(n=>groupMatchesLabel(e,n)) && found.indexOf(e)===-1) found.push(e);
+        const hit = localNames.some(n=>(e.aliases||[]).some(a=>normalizeModifierKey(a)===normalizeModifierKey(n)));
+        if(hit && found.indexOf(e)===-1) found.push(e);
       });
     });
     if(!found.length) return;
@@ -2766,7 +2941,9 @@ function attachModifierGroups(items, acc){
 
   /* Keep every unlinked catalogue group as an orphan.  A modifier must never
      vanish merely because the delivery site omitted the reverse item link. */
-  const orphans = acc.list.filter(e=>!used.has(e)).map(e=>e.group);
+  /* Unlinked catalogue groups are NOT exported: the Modifiers sheet must only
+     contain add-ons that a menu item actually uses. */
+  const orphans = [];
   return { attached, orphans };
 }
 
@@ -3001,10 +3178,12 @@ function itemGroups(it){
   const mk = (label, list, min, max)=>{
     const options = (list||[]).filter(o=>o && o.name).map(o=>({
       name:{ en:o.name, ar:o.name },
-      price: typeof o.price === "number" ? round2(o.price) : 0,
-      oldPrice: ""
+      price: typeof o.price === "number" ? o.price : 0,
+      priceText: o.priceText || priceToText(o.price),
+      oldPrice: o.oldPrice === null || o.oldPrice === undefined ? "" : o.oldPrice,
+      oldPriceText: o.oldPriceText || priceToText(o.oldPrice)
     }));
-    if(options.length) add({ name:{ en:label, ar:label }, min, max:Math.max(min, max || options.length), options });
+    if(options.length) add({ name:{ en:label, ar:label }, min, max:Math.max(min, max || options.length), options, absoluteSizes: label==="Choose Your Size:" });
   };
   if(!(it.choiceGroups||[]).some(g=>modifierKind(g.name && (g.name.en || g.name.ar))==="size")){
     mk("Choose Your Size:", it.sizes, 1, 1);
@@ -3018,60 +3197,72 @@ function itemGroups(it){
 /* Return the labels written to the POS Menu sheet.  The source label wins
    when it cannot be resolved; otherwise the exact registry label is used so
    Menu.Choice Groups and Modifiers.Group Name are guaranteed to cross-link. */
-function itemGroupLabels(it, registry, lang){
-  const groups = itemGroups(it);
-  const labels = [];
-  const used = new Set();
-  const push = value => {
-    const text = cleanText(value);
-    if(text && labels.indexOf(text)===-1) labels.push(text);
-  };
-  const matchingGroups = label => groups.filter(g=>{
-    const names = [g.name && g.name.en, g.name && g.name.ar].filter(Boolean);
-    const target = normalizeModifierKey(label);
-    if(names.some(n=>{
-      const key = normalizeModifierKey(n);
-      return key && target && (key===target || key.includes(target) || target.includes(key));
-    })) return true;
-    const kind = modifierKind(label);
-    return !!kind && kind!=="options" && names.some(n=>modifierKind(n)===kind);
+/* ---- POS preparation: produce exactly the reference (file 1) layout ----
+   - a group whose name is a menu category, or whose options are menu dishes,
+     is a menu section that leaked in — never a modifier;
+   - an additive single-choice size group (Regular +0 / Large +x) becomes one
+     Menu row per size with the final price, like the reference workbook;
+   - only groups really used by exported items reach the Modifiers sheet. */
+function posKey(v){ return normalizeModifierKey(v); }
+function isSizeExpandable(g){
+  if(!g || !g.options || g.options.length < 2) return false;
+  if(g.absoluteSizes) return true;
+  const nm = [g.name && g.name.en, g.name && g.name.ar].filter(Boolean);
+  if(!nm.some(n=>modifierKind(n)==="size")) return false;
+  if(!(Number(g.min)===1 && Number(g.max)===1)) return false;
+  return g.options.some(o=>Number(o.price)===0);
+}
+function preparePosItems(items){
+  const catKeys = new Set(), dishKeys = new Set();
+  items.forEach(it=>{
+    [it.category, it.categoryI18n && it.categoryI18n.en, it.categoryI18n && it.categoryI18n.ar].forEach(v=>{ const k=posKey(v); if(k) catKeys.add(k); });
+    [it.itemName, it.nameI18n && it.nameI18n.en, it.nameI18n && it.nameI18n.ar].forEach(v=>{ const k=posKey(v); if(k) dishKeys.add(k); });
   });
-
-  const explicit = (it.choiceGroupLabels||[]).filter(Boolean);
-  explicit.forEach(label=>{
-    const candidates = matchingGroups(label).filter(g=>!used.has(g));
-    if(candidates.length){
-      const g = candidates[0];
-      used.add(g);
-      push(registry ? registry.labelFor(g, lang) : posText(g.name, lang));
-    } else {
-      const kind = modifierKind(label);
-      const alreadyRepresented = kind && Array.from(used).some(g=>{
-        return modifierKind(g.name && (g.name.en || g.name.ar))===kind;
-      });
-      if(!alreadyRepresented) push(label);
+  const isMenuEcho = g=>{
+    const names = [g.name && g.name.en, g.name && g.name.ar].map(posKey).filter(Boolean);
+    if(names.some(n=>catKeys.has(n))) return true;
+    const opts = g.options || [];
+    if(opts.length >= 2){
+      const hits = opts.filter(o=>[o.name && o.name.en, o.name && o.name.ar].some(n=>dishKeys.has(posKey(n)))).length;
+      if(hits / opts.length >= 0.8) return true;
     }
+    return opts.some(o=>Number(o.oldPrice) < 0);
+  };
+  return items.map(it=>{
+    let groups = itemGroups(it);
+    if(groups.some(g=>g.live)) groups = groups.filter(g=>g.live);
+    groups = groups.filter(g=>!isMenuEcho(g));
+    let sizeGroup = groups.find(isSizeExpandable) || null;
+    if(sizeGroup) groups = groups.filter(g=>g!==sizeGroup);
+    const base = typeof it.price === "number" ? it.price : parseFloat(it.priceText);
+    const rows = sizeGroup ? sizeGroup.options.map(o=>{
+      const add = typeof o.price === "number" ? o.price : 0;
+      const total = sizeGroup.absoluteSizes ? add : (isNaN(base) ? add : base + add);
+      return { size:o.name, priceText: priceToText(round2(total)) };
+    }) : [{ size:null, priceText: it.priceText !== undefined && it.priceText !== "" ? it.priceText : priceToText(it.price) }];
+    return { it, groups, rows };
   });
-  groups.forEach(g=>{
-    if(used.has(g)) return;
-    push(registry ? registry.labelFor(g, lang) : posText(g.name, lang));
+}
+function itemGroupLabels(entry, registry, lang){
+  const labels = [];
+  entry.groups.forEach(g=>{
+    const t = cleanText(registry.labelFor(g, lang));
+    if(t && labels.indexOf(t)===-1) labels.push(t);
   });
   return labels;
 }
 
-function buildModifierRegistry(items){
+function buildModifierRegistry(prepared){
   const byKey = new Map();      // signature -> { n, name }
   const byBase = new Map();     // base name -> count
   const groups = [];            // ordered { group, n }
   const sigOf = (g)=>{
     const base = (g.name.en || g.name.ar || "Options").trim();
     return base + "||" + g.min + "|" + g.max + "|" +
-      g.options.map(o=>(o.name.en||o.name.ar)+":"+o.price).join(",");
+      g.options.map(o=>(o.name.en||o.name.ar)+":"+o.price+":"+(o.oldPrice||"")).join(",");
   };
-  const buckets = items.map(it=>itemGroups(it).filter(g=>g.options && g.options.length));
-  if(State.orphanGroups && State.orphanGroups.length) buckets.push(State.orphanGroups);
-  buckets.forEach(bucket=>{
-    bucket.forEach(g=>{
+  prepared.forEach(entry=>{
+    entry.groups.forEach(g=>{
       const base = (g.name.en || g.name.ar || "Options").trim();
       const sig = sigOf(g);
       if(byKey.has(sig)) return;
@@ -3081,9 +3272,6 @@ function buildModifierRegistry(items){
       groups.push({ group: g, n });
     });
   });
-  /* Same disambiguation index in both files, but the label itself is written in
-     the workbook language so the Arabic file is fully Arabic while the Menu
-     sheet and the Modifiers sheet stay perfectly cross-referenced. */
   const labelFor = (g, lang)=>{
     const entry = byKey.get(sigOf(g));
     const n = entry ? entry.n : 1;
@@ -3113,21 +3301,24 @@ function posText(node, lang){
   return splitBilingual(v || "", lang);
 }
 
-function buildPosWorkbook(lang, registry){
+function buildPosWorkbook(lang, registry, prepared){
   const wb = XLSX.utils.book_new();
   wb.Workbook = { Views: [{ RTL: lang === "ar" }] };
 
   const menuRows = [POS_MENU_HEADER];
-  State.items.forEach(it=>{
-    const labels = itemGroupLabels(it, registry, lang);
-    menuRows.push([
-      posText(it.categoryI18n, lang) || splitBilingual(it.category || "", lang),
-      posText(it.nameI18n, lang) || splitBilingual(it.itemName || "", lang),
-      it.sizeLabel || "",
-      it.priceText !== undefined && it.priceText !== "" ? it.priceText : priceToText(it.price),
-      posText(it.descriptionI18n, lang) || splitBilingual(it.description || "", lang),
-      labels.join(" #")
-    ]);
+  prepared.forEach(entry=>{
+    const it = entry.it;
+    const labels = itemGroupLabels(entry, registry, lang).join(" #");
+    entry.rows.forEach(row=>{
+      menuRows.push([
+        posText(it.categoryI18n, lang) || splitBilingual(it.category || "", lang),
+        posText(it.nameI18n, lang) || splitBilingual(it.itemName || "", lang),
+        row.size ? posText(row.size, lang) : (it.sizeLabel || ""),
+        row.priceText,
+        posText(it.descriptionI18n, lang) || splitBilingual(it.description || "", lang),
+        labels
+      ]);
+    });
   });
   const wsMenu = XLSX.utils.aoa_to_sheet(menuRows, { cellDates:false });
   // Force Price + all text columns to string cells so "0.000" style values
@@ -3151,15 +3342,26 @@ function buildPosWorkbook(lang, registry){
       modRows.push([
         label,
         posText(o.name, lang),
-        typeof o.price === "number" ? o.price : 0,
-        o.oldPrice === "" || o.oldPrice === null || o.oldPrice === undefined ? "" : o.oldPrice,
+        o.priceText !== undefined && o.priceText !== "" ? o.priceText : priceToText(o.price),
+        o.oldPriceText !== undefined && o.oldPriceText !== "" ? o.oldPriceText :
+          (o.oldPrice === "" || o.oldPrice === null || o.oldPrice === undefined ? "" : priceToText(o.oldPrice)),
         group.min,
         group.max
       ]);
     });
   });
   const wsMod = XLSX.utils.aoa_to_sheet(modRows);
-  wsMod["!cols"] = [{wch:24},{wch:36},{wch:14},{wch:12},{wch:8},{wch:8}];
+  // Keep both price columns as text so every published decimal digit is visible
+  // and Excel cannot round three-decimal currencies or long option prices.
+  for(let r=1;r<modRows.length;r++){
+    for(const c of [2,3]){
+      const addr = XLSX.utils.encode_cell({r,c});
+      if(wsMod[addr]){ wsMod[addr].t = "s"; wsMod[addr].v = String(wsMod[addr].v ?? ""); }
+      else wsMod[addr] = { t:"s", v:"" };
+    }
+  }
+  wsMod["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:modRows.length-1,c:POS_MOD_HEADER.length-1}});
+  wsMod["!cols"] = [{wch:24},{wch:36},{wch:18},{wch:18},{wch:8},{wch:8}];
   XLSX.utils.book_append_sheet(wb, wsMod, "Modifiers");
 
   return wb;
@@ -3173,10 +3375,17 @@ function posFilename(lang){
 function exportPosWorkbooks(which){
   if(!State.items.length){ toastMsg("No menu data to export yet.", "err"); return; }
   try{
-    const registry = buildModifierRegistry(State.items);
+    const prepared = preparePosItems(State.items.filter(it=>!isExcludedCategory(it)));
+    const validPrepared = prepared.filter(entry=>entry && entry.it &&
+      cleanText(entry.it.itemName || "") && entry.rows && entry.rows.some(row=>cleanText(row.priceText || "") !== ""));
+    if(!validPrepared.length){
+      toastMsg("The menu response is incomplete. Please analyze the link again before downloading.", "err");
+      return;
+    }
+    const registry = buildModifierRegistry(validPrepared);
     const langs = which === "both" ? ["en","ar"] : [which];
     langs.forEach((lang, i)=>{
-      const wb = buildPosWorkbook(lang, registry);
+      const wb = buildPosWorkbook(lang, registry, validPrepared);
       const name = posFilename(lang);
       // stagger writes so browsers accept both downloads
       setTimeout(()=> XLSX.writeFile(wb, name), i * 700);
@@ -3240,9 +3449,17 @@ function renderDebug(){
    EVENT WIRING
    ========================================================================= */
 function init(){
-  $("#btnAnalyze").addEventListener("click", ()=>{
+  $("#btnAnalyze").addEventListener("click", async ()=>{
+    if(analysisInProgress) return;
     const val = $("#urlInput").value;
-    analyzeUrl(val);
+    analysisInProgress = true;
+    const btn = $("#btnAnalyze");
+    btn.disabled = true;
+    State.items = [];
+    State.categories = [];
+    State.orphanGroups = [];
+    try{ await analyzeUrl(val); }
+    finally{ analysisInProgress = false; btn.disabled = false; }
   });
   $("#urlInput").addEventListener("keydown", e=>{ if(e.key==="Enter") $("#btnAnalyze").click(); });
 
@@ -3282,8 +3499,9 @@ document.addEventListener("DOMContentLoaded", init);
 window.__LAITH__ = {
   State, extractEmbeddedJsonBlobs, extractItemsFromBlobs, harvestFromSource,
   attachModifierGroups, mergeArabicItems, buildModifierRegistry, buildPosWorkbook,
-  itemGroups, itemGroupLabels, mapRawItem, collectChoiceGroups, collectChoiceGroupLabels,
-  arabicUrlVariants, arabicCoverage, dropModifierEchoes
+  itemGroups, itemGroupLabels, preparePosItems, isExcludedCategory, mapRawItem, collectChoiceGroups, collectChoiceGroupLabels,
+  arabicUrlVariants, arabicCoverage, dropModifierEchoes, parsePriceValue, priceToText, parseChoicePayload, normalizeChoiceGroup,
+  extractPrimaryMenuItems, payloadMenuScore, isUsableMenuItem, buildPosWorkbook
 };
 })();
 </script>
