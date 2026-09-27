@@ -518,7 +518,7 @@ const State = {
   debug: {
     normalizedUrl:"", extractionMethod:"", rawRecordCount:0, normalizedRecordCount:0,
     duplicateCount:0, detectedCategories:0, detectedCurrency:"", warnings:[],
-    modifierGroups:0, modifierSource:"", arabicSource:"", arabicCoverage:""
+    modifierGroups:0, modifierSource:"", liveChoices:"", resourceSweep:"", arabicSource:"", arabicCoverage:""
   }
 };
 let itemIdCounter = 1;
@@ -615,6 +615,52 @@ function parsePriceValue(raw){
 }
 function round2(n){ return Math.round(n*100)/100; }
 
+/* Prefer the published pre-discount/list price whenever the menu exposes one.
+   Delivery platforms use several field names and sometimes nest both values
+   inside a price object, so price selection is centralized here. */
+const ORIGINAL_PRICE_KEYS = [
+  "oldPrice","originalPrice","priceBeforeDiscount","beforeDiscountPrice",
+  "regularPrice","listPrice","fullPrice","undiscountedPrice","previousPrice",
+  "crossedOutPrice","strikethroughPrice","strikeThroughPrice","wasPrice",
+  "originalAmount","regularAmount","baseAmount"
+];
+const CURRENT_PRICE_KEYS = [
+  "price","amount","cost","unitPrice","finalPrice","displayPrice","basePrice",
+  "discountedPrice","salePrice","currentPrice","priceAfterDiscount"
+];
+function unwrapPriceCandidate(value){
+  if(value===null || value===undefined || value==="") return undefined;
+  if(typeof value !== "object") return value;
+  return pick(value, [
+    ...ORIGINAL_PRICE_KEYS, "value","amount","price","total","formatted","text"
+  ]);
+}
+function findOriginalPrice(raw){
+  if(!raw || typeof raw !== "object") return undefined;
+  let value = pick(raw, ORIGINAL_PRICE_KEYS);
+  if(value!==undefined) return unwrapPriceCandidate(value);
+
+  const priceObject = pick(raw, ["price","priceInfo","pricing","priceDetails","discount","promotion"]);
+  if(priceObject && typeof priceObject === "object"){
+    value = pick(priceObject, ORIGINAL_PRICE_KEYS.concat(["original","regular","beforeDiscount","before_discount","was"]));
+    if(value!==undefined) return unwrapPriceCandidate(value);
+  }
+  return undefined;
+}
+function resolveMenuPrice(raw){
+  const originalRaw = findOriginalPrice(raw);
+  let currentRaw = pick(raw, CURRENT_PRICE_KEYS);
+  if(currentRaw && typeof currentRaw === "object"){
+    currentRaw = pick(currentRaw, ["current","discounted","sale","final","value","amount","price","total","formatted","text"]) ?? "";
+  }
+  const original = parsePriceValue(originalRaw);
+  const current = parsePriceValue(currentRaw);
+  if(original.value!==null && original.value>0){
+    return { raw:originalRaw, value:original.value, currency:original.currency || current.currency, currentValue:current.value, source:"original" };
+  }
+  return { raw:currentRaw, value:current.value, currency:current.currency, currentValue:current.value, source:"current" };
+}
+
 /* =========================================================================
    URL NORMALIZATION
    ========================================================================= */
@@ -696,11 +742,19 @@ function readerBases(){
   return bases;
 }
 
-const FETCH_ROUTES = readerBases().map((base, i) => ({
+const FETCH_ROUTES = [
+  "https://project--ce11bd83-e944-463a-ad52-de4372d80531.lovable.app/api/public/fetch",
+  "https://project--ce11bd83-e944-463a-ad52-de4372d80531-dev.lovable.app/api/public/fetch",
+  "http://localhost:8080/api/public/fetch"
+].map((base, i) => ({
+  label: "relay" + (i ? i + 1 : ""),
+  build: u => base + "?url=" + encodeURIComponent(u),
+  timeout: 45000
+})).concat(readerBases().map((base, i) => ({
   label: i === 0 ? "reader" : "reader-cloud",
   build: u => base + "?url=" + encodeURIComponent(u),
   timeout: 45000
-})).concat([
+}))).concat([
   { label:"jina", build: u => "https://r.jina.ai/" + u, timeout:25000 },
   { label:"allorigins", build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u), timeout:15000 },
   { label:"codetabs", build: u => "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u), timeout:15000 },
@@ -886,6 +940,18 @@ function extractItemsFromDom(source){
   doc.querySelectorAll("script,style,noscript,svg,header,footer,nav").forEach(n=>n.remove());
 
   const priceRe = /(?:^|\s)(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623|\$|\u20ac|\u00a3)?\s*\d{1,4}(?:[.,]\d{1,3})?\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623)?(?:$|\s)/i;
+  const exactPriceRe = /(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623|\$|\u20ac|\u00a3)\s*\d{1,5}(?:[.,]\d{1,3})?|\d{1,5}(?:[.,]\d{1,3})?\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623)/ig;
+  const struckSelector = "s, strike, del, [style*='line-through' i], [class*='old-price' i], [class*='oldprice' i], [class*='original-price' i], [class*='originalprice' i], [class*='regular-price' i], [class*='before-discount' i], [class*='strik' i], [data-testid*='old-price' i], [data-testid*='original-price' i]";
+  const struckPriceIn = el => {
+    for(const node of Array.from(el.querySelectorAll(struckSelector))){
+      const matches = cleanText(node.textContent||"").match(exactPriceRe) || [];
+      for(const raw of matches){
+        const parsed = parsePriceValue(raw);
+        if(parsed.value!==null && parsed.value>0) return raw;
+      }
+    }
+    return "";
+  };
   const items = [];
   const seen = new Set();
   let currentCategory = "";
@@ -908,10 +974,11 @@ function extractItemsFromDom(source){
     if(el.children.length > 6) return;
     const text = cleanText(el.textContent || "");
     if(!text || text.length > 220) return;
-    const m = text.match(/(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623|\$|\u20ac|\u00a3)\s*\d{1,5}(?:[.,]\d{1,3})?|\d{1,5}(?:[.,]\d{1,3})?\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|\u062f\.\u0625|\u0631\.\u0633|\u062f\.\u0643|\u062c\.\u0645|\u062f\.\u0623)/i);
-    if(!m) return;
-    const priceRaw = m[0];
-    let name = cleanText(text.replace(priceRaw, " "));
+    const allPrices = text.match(exactPriceRe) || [];
+    if(!allPrices.length) return;
+    const struckPrice = struckPriceIn(el);
+    const priceRaw = struckPrice || allPrices[0];
+    let name = cleanText(allPrices.reduce((value, found)=>value.replace(found, " "), text));
     let description = "";
     if(name.length > 70){
       const parts = name.split(/[\u2022|\-\u2013]|\.\s/);
@@ -955,7 +1022,9 @@ function extractItemsFromText(source){
     const match = raw.match(priceAtEnd);
     if(!match || (!match[1] && !match[3])) continue; // require an explicit currency
     const priceText = [match[1] || "", match[2], match[3] || ""].join(" ").trim();
-    let before = cleanText(raw.slice(0, match.index).replace(/^[|\s]+|[|–—:\-\s]+$/g, "").replace(/[*_`]/g, ""));
+    const struck = raw.match(/~~\s*((?:(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|EUR|GBP|د\.إ|ر\.س|د\.ك|ج\.م|د\.أ|€|£|\$)\s*)?\d{1,5}(?:[.,]\d{1,3})?(?:\s*(?:AED|SAR|QAR|KWD|BHD|OMR|EGP|JOD|USD|EUR|GBP|د\.إ|ر\.س|د\.ك|ج\.م|د\.أ|€|£|\$))?)\s*~~/i);
+    const namePart = struck ? raw.replace(struck[0], " ") : raw;
+    let before = cleanText(namePart.slice(0, match.index).replace(/^[|\s]+|[|–—:\-\s]+$/g, "").replace(/[*_`]/g, ""));
     const cells = before.split("|").map(cleanText).filter(Boolean);
     if(cells.length) before = cells[0];
     let name = before, description = "";
@@ -964,7 +1033,7 @@ function extractItemsFromText(source){
     if(!name || name.length < 2 || name.length > 120) continue;
     const key = (category + "|" + name + "|" + priceText).toLowerCase();
     if(seen.has(key)) continue; seen.add(key);
-    out.push({ name, description, category, price:priceText });
+    out.push({ name, description, category, price:struck ? struck[1] : priceText });
   }
   return out.slice(0,1500);
 }
@@ -986,7 +1055,7 @@ function looksLikeMenuItem(obj){
   if(!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
   const keys = Object.keys(obj).map(k=>k.toLowerCase());
   const hasName = keys.some(k => ["name","title","itemname","productname","nameen","name_en"].includes(k));
-  const hasPrice = keys.some(k => ["price","amount","cost","unitprice","finalprice","baseprice","displayprice","pricerange"].includes(k));
+  const hasPrice = keys.some(k => CURRENT_PRICE_KEYS.concat(ORIGINAL_PRICE_KEYS).map(x=>x.toLowerCase()).concat(["baseprice","pricerange"]).includes(k));
   const nameVal = pick(obj, ["name","title","itemName","productName"]);
   if(typeof nameVal !== "string" && typeof nameVal !== "object" && typeof nameVal !== "number") return false;
   /* Only section/category arrays make this a container.  Modifier arrays
@@ -1197,7 +1266,7 @@ function numOr(v, fallback){
 
 /* Normalize one modifier group into { name{en,ar}, min, max, options[] }. */
 function normalizeChoiceGroup(node){
-  const nameB = readBilingual(node, ["name","title","label","groupName","displayName","header"]);
+  const nameB = readBilingual(node, ["name","title","label","groupName","displayName","header","sectionName"]);
   const optsRaw = pick(node, CHOICE_OPTION_KEYS) || [];
   const options = (Array.isArray(optsRaw) ? optsRaw : []).map(o=>{
     if(typeof o === "string") return { name:{en:cleanText(o), ar:cleanText(o)}, price:0, oldPrice:"" };
@@ -1325,11 +1394,10 @@ function mapRawItem(raw, fallbackCategory, catIndex){
   const descB = readBilingual(raw, ["description","desc","details","summary"]);
   const name = nameB.en || nameB.ar;
   const desc = descB.en || descB.ar;
-  let priceRaw = pick(raw, ["price","amount","cost","unitPrice","finalPrice","basePrice","displayPrice","discountedPrice"]);
-  if(priceRaw && typeof priceRaw === "object"){
-    priceRaw = pick(priceRaw, ["value","amount","price","total","formatted","text"]) ?? "";
-  }
-  const { value: price, currency: parsedCurrency } = parsePriceValue(priceRaw);
+  const resolvedPrice = resolveMenuPrice(raw);
+  const priceRaw = resolvedPrice.raw;
+  const price = resolvedPrice.value;
+  const parsedCurrency = resolvedPrice.currency;
   const currency = readName(pick(raw, ["currency","currencyCode","curr"])) || parsedCurrency || "";
 
   const categoryB = readBilingual(raw, ["category","categoryName","sectionName","menuSectionName","section"]);
@@ -1373,6 +1441,8 @@ function mapRawItem(raw, fallbackCategory, catIndex){
     nameI18n: { en: nameB.en || name, ar: nameB.ar || name },
     descriptionI18n: { en: descB.en || desc, ar: descB.ar || desc },
     priceText: priceToText(price, typeof priceRaw === "string" ? priceRaw : undefined),
+    priceSource: resolvedPrice.source,
+    discountedPrice: resolvedPrice.source === "original" ? resolvedPrice.currentValue : null,
     sizeLabel: cleanText(readName(pick(raw, ["size","sizeName","portion","variantName"]) || "")),
     choiceGroups: collectChoiceGroups(raw),
      choiceGroupLabels: collectChoiceGroupLabels(raw),
@@ -1540,7 +1610,7 @@ function buildDemoDataset(){
    ========================================================================= */
 const STAGES = [
   "Validating URL", "Detecting restaurant", "Loading menu data", "Extracting categories",
-  "Extracting menu items", "Cleaning data", "Scanning source for modifiers",
+  "Extracting menu items", "Cleaning data", "Scanning page files for add-ons",
   "Fetching Arabic menu", "Completing Arabic content", "Preparing Excel workbooks"
 ];
 
@@ -1653,6 +1723,30 @@ async function analyzeUrl(rawUrl){
   // Stage 6 — deep modifier harvesting straight from the page source code.
   await runStage(6, async ()=>{
     const acc = harvestFromSource(blobs, fetchResult.html);
+    const inlineCount = acc.list.length;
+
+    /* DevTools-style sweep: read every file the page loads (Sources + Network)
+       and harvest the modifier catalogue from there. */
+    let live = null;
+    try{
+      live = await fetchLiveChoices(cleaned.items, normalized.normalizedUrl, fetchResult.html, null);
+    }catch(e){ State.debug.warnings.push("Add-on fetch failed: " + e.message); }
+    if(live && live.supported && !live.relay){
+      State.debug.warnings.push("Add-on endpoint unreachable: publish this app so its /api/public/fetch relay is online.");
+    }
+    State.debug.liveChoices = live && live.supported
+      ? (live.withGroups + "/" + live.requested + " dishes returned add-ons, " + live.groupsAdded + " groups added from the item endpoint")
+      : "per-item add-on endpoint not available for this site";
+
+    let sweep = null;
+    try{
+      sweep = await sweepPageResources(acc, fetchResult.html, normalized.normalizedUrl, null);
+    }catch(e){ State.debug.warnings.push("Resource sweep failed: " + e.message); }
+    State.debug.resourceSweep = sweep
+      ? (sweep.fetched + "/" + sweep.queued + " page files read, " + sweep.withGroups + " contained modifiers" +
+         (sweep.files.length ? " — " + sweep.files.slice(0,6).join(", ") : ""))
+      : "not run";
+
     const before = cleaned.items.length;
     cleaned.items = dropModifierEchoes(cleaned.items, acc);
     if(cleaned.items.length !== before) State.debug.warnings.push((before - cleaned.items.length) + " modifier options were removed from the item list.");
@@ -1661,9 +1755,11 @@ async function analyzeUrl(rawUrl){
     const total = cleaned.items.reduce((n,it)=>n + ((it.choiceGroups||[]).length), 0) + res.orphans.length;
     State.debug.modifierGroups = total;
     State.debug.modifierSource = acc.list.length
-      ? ("source scan: " + acc.list.length + " groups found, " + res.attached + " linked" + (res.orphans.length ? ", " + res.orphans.length + " unlinked" : ""))
+      ? ("page + resource scan: " + acc.list.length + " groups found (" + inlineCount + " inline, " +
+         Math.max(0, acc.list.length - inlineCount) + " from page files), " + res.attached + " linked" +
+         (res.orphans.length ? ", " + res.orphans.length + " unlinked" : ""))
       : "inline item data only";
-    if(!total) State.debug.warnings.push("No modifier groups were exposed by this page.");
+    if(!total) State.debug.warnings.push("No modifier groups were exposed by this page or any of the files it loads.");
   });
 
   // Stage 7 — Arabic rendition of the same menu.
@@ -2217,6 +2313,382 @@ function harvestFromSource(blobs, source){
   return acc;
 }
 
+/* =========================================================================
+   LIVE ADD-ON (CHOICES) FETCHER  —  the DevTools "Network" route
+   Delivery pages print only "hasChoices": true; the actual add-on groups are
+   served per item by a separate endpoint that the page calls when a dish is
+   opened. This layer calls that endpoint for every extracted dish, in both
+   English and Arabic, and writes the result straight into the item's
+   modifier list — which is what finally fills the Modifiers sheet.
+   ========================================================================= */
+
+/* The relay is this tool's own server endpoint (/api/public/fetch). It is
+   tried on the published address first, then the preview build, then a local
+   dev server, and the first one that answers is reused for the whole run. */
+const MENUX_RELAYS = [
+  "https://project--ce11bd83-e944-463a-ad52-de4372d80531.lovable.app/api/public/fetch",
+  "https://project--ce11bd83-e944-463a-ad52-de4372d80531-dev.lovable.app/api/public/fetch",
+  "http://localhost:8080/api/public/fetch"
+];
+let MENUX_RELAY = "";
+
+/* Public CORS-friendly reader — works without any server of our own. */
+const JINA_RELAY = "jina";
+function jinaUrl(u){ return "https://r.jina.ai/" + u; }
+function unwrapReaderText(t){
+  const i = t.indexOf("Markdown Content:");
+  return (i >= 0 ? t.slice(i + "Markdown Content:".length) : t).trim();
+}
+
+async function pickRelay(){
+  if(MENUX_RELAY) return MENUX_RELAY;
+  for(const base of MENUX_RELAYS){
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), 12000);
+      const r = await fetch(base + "?url=" + encodeURIComponent("https://example.com"), { signal: ctrl.signal });
+      clearTimeout(t);
+      if(!r.ok) continue;
+      const j = await r.json();
+      if(j && typeof j.html === "string"){ MENUX_RELAY = base; return base; }
+    }catch(e){ /* try the next one */ }
+  }
+  MENUX_RELAY = JINA_RELAY;                 // always-available public reader
+  return MENUX_RELAY;
+}
+
+async function relayFetchText(url, lang, ms){
+  const base = await pickRelay();
+  if(!base) return "";
+  const controller = new AbortController();
+  const t = setTimeout(()=>controller.abort(), ms || 20000);
+  try{
+    if(base === JINA_RELAY){
+      const r = await fetch(jinaUrl(url), { signal: controller.signal, headers: { "Accept": "text/plain" } });
+      clearTimeout(t);
+      if(!r.ok) return "";
+      return unwrapReaderText(await r.text());
+    }
+    const r = await fetch(base + "?url=" + encodeURIComponent(url) + (lang ? "&lang=" + lang : ""), { signal: controller.signal });
+    clearTimeout(t);
+    const j = await r.json();
+    if(j && j.ok && typeof j.html === "string") return j.html;
+    return "";
+  }catch(e){ clearTimeout(t); return ""; }
+}
+async function relayFetchJson(url, lang, ms){
+  let txt = await relayFetchText(url, lang, ms);
+  if(!txt) return null;
+  let obj = safeJsonParse(txt);
+  if(obj) return obj;
+  const i = txt.indexOf("{");
+  const j = txt.lastIndexOf("}");
+  if(i >= 0 && j > i) obj = safeJsonParse(txt.slice(i, j + 1));
+  return obj;
+}
+
+/* ---- Talabat ---------------------------------------------------------- */
+function talabatContext(pageUrl, pageHtml){
+  let p; try{ p = new URL(pageUrl); }catch(e){ return null; }
+  if(!/(^|\.)talabat\.com$/i.test(p.hostname)) return null;
+  let branch = "";
+  const m = p.pathname.match(/\/restaurant\/(\d+)/);
+  if(m) branch = m[1];
+  if(!branch){
+    const b = String(pageHtml||"").match(/"branchId"\s*:\s*(\d+)/);
+    if(b) branch = b[1];
+  }
+  if(!branch) return null;
+  return {
+    branch,
+    endpoint: (itemId, /*lang*/ ) => p.origin + "/nextMenuBff/branch-menus/" + branch + "/items/" + itemId + "/choices",
+    fallback: itemId => "https://api.talabat.com/menubff/v3/branches/" + branch + "/menu/" + itemId + "/choices"
+  };
+}
+
+/* Both response shapes of the Talabat choices endpoint -> our group model. */
+function parseChoicePayload(payload){
+  const groups = [];
+  if(!payload || typeof payload !== "object") return groups;
+
+  const addGroup = (name, min, max, opts)=>{
+    const options = (opts||[]).map(o=>{
+      const nm = cleanText(String(o.name||""));
+      if(!nm) return null;
+      const price = Number(o.price);
+      return { name:{ en:nm, ar:nm }, price: isNaN(price) ? 0 : round2(price), oldPrice:"" };
+    }).filter(Boolean);
+    if(!options.length) return;
+    const gname = cleanText(String(name||"")) || "Options";
+    groups.push({
+      name:{ en:gname, ar:gname },
+      min: Math.max(0, Number(min)||0),
+      max: Math.max(0, Number(max)||options.length),
+      options
+    });
+  };
+
+  // friendly shape: { choices:[ { sectionName, minQuantity, maxQuantity, choices:[{name,price}] } ] }
+  if(Array.isArray(payload.choices)){
+    payload.choices.forEach(sec=>{
+      if(!sec || typeof sec !== "object") return;
+      addGroup(sec.sectionName || sec.name || sec.title, sec.minQuantity, sec.maxQuantity,
+        (sec.choices||sec.items||[]).map(c=>({ name:c && (c.name||c.title), price:c && c.price })));
+    });
+  }
+
+  // compact shape: { result:{ choiceForItem:[ { choiceSections:[ {nm,mnq,mxq,ich:[{nm,pr}]} ] } ] } }
+  const cfi = payload.result && payload.result.choiceForItem;
+  if(Array.isArray(cfi)){
+    cfi.forEach(entry=>{
+      (entry && entry.choiceSections || []).forEach(sec=>{
+        addGroup(sec.nm, sec.mnq, sec.mxq, (sec.ich||[]).map(c=>({ name:c && c.nm, price:c && c.pr })));
+      });
+    });
+  }
+  return groups;
+}
+
+/* Merge the Arabic run into the English groups, position by position. */
+function mergeGroupLanguages(en, ar){
+  if(!ar || !ar.length) return en;
+  en.forEach((g, gi)=>{
+    const a = ar[gi];
+    if(!a) return;
+    if(a.name && a.name.en) g.name.ar = a.name.en;
+    g.options.forEach((o, oi)=>{
+      const ao = a.options && a.options[oi];
+      if(ao && ao.name && ao.name.en) o.name.ar = ao.name.en;
+    });
+  });
+  return en;
+}
+
+/* Fetch add-ons for every dish. Returns a small report for the debug panel. */
+async function fetchLiveChoices(items, pageUrl, pageHtml, onTick){
+  const ctx = talabatContext(pageUrl, pageHtml);
+  const report = { supported: !!ctx, relay:"", requested:0, withGroups:0, groupsAdded:0, failed:0 };
+  if(!ctx) return report;
+  report.relay = await pickRelay();
+  if(!report.relay) return report;
+
+  const targets = items.filter(it=>/^\d{5,}$/.test(String(it.sourceId||"")));
+  if(!targets.length) return report;
+
+  const viaReader = report.relay === JINA_RELAY;   // public reader is rate limited
+  const CONC = viaReader ? 3 : 6, BUDGET = viaReader ? 220000 : 150000, started = Date.now();
+  let cursor = 0, consecutiveFailures = 0;
+
+  const worker = async ()=>{
+    while(cursor < targets.length){
+      if(Date.now() - started > BUDGET) return;
+      if(consecutiveFailures > 25) return;              // endpoint clearly unavailable
+      const it = targets[cursor++];
+      report.requested++;
+      let payload = await relayFetchJson(ctx.endpoint(it.sourceId), "en", 20000);
+      if(!payload || (!payload.choices && !payload.result)){
+        payload = await relayFetchJson(ctx.fallback(it.sourceId), "en", 20000);
+      }
+      const groups = parseChoicePayload(payload);
+      if(!groups.length){ consecutiveFailures++; continue; }
+      consecutiveFailures = 0;
+
+      if(!viaReader){
+        const arPayload = await relayFetchJson(ctx.endpoint(it.sourceId), "ar", 20000);
+        mergeGroupLanguages(groups, parseChoicePayload(arPayload));
+      }
+
+      const existing = new Set((it.choiceGroups||[]).map(g=>(g.name.en||"") + "|" + g.options.length));
+      const add = groups.filter(g=>!existing.has((g.name.en||"") + "|" + g.options.length));
+      if(add.length){
+        it.choiceGroups = (it.choiceGroups||[]).concat(add);
+        report.withGroups++;
+        report.groupsAdded += add.length;
+      }
+      if(typeof onTick === "function") onTick(report);
+    }
+  };
+
+  await Promise.all(Array.from({length:CONC}, worker));
+  report.failed = report.requested - report.withGroups;
+  return report;
+}
+
+/* =========================================================================
+   NETWORK / SOURCES SWEEP  (what a human does with DevTools)
+   A delivery page almost never prints its modifier catalogue into the HTML.
+   The add-on groups live in the files the page itself loads: the JS chunks
+   under "Sources" and the JSON endpoints under "Network".  This layer
+   reproduces that by hand:
+     1. discover every sub-resource the page references (script chunks,
+        preloaded payloads, absolute API URLs, quoted API paths),
+     2. download them through the same relay stack used for the page,
+     3. harvest every modifier group found inside them,
+     4. follow one extra hop of endpoints discovered inside those files.
+   Everything is merged into the same accumulator that the item linker uses,
+   so harvested groups still attach to their items by id / name / label.
+   ========================================================================= */
+
+const SWEEP_HINT = /(menu|item|product|choice|modifier|option|topping|addon|add-?on|extra|variant|catalog|section|restaurant|vendor|branch|store|outlet)/i;
+const SWEEP_API_HINT = /(\/api\/|\/nextapi\/|graphql|\.json|\/v\d\/|gateway|bff)/i;
+const SWEEP_SKIP = /\.(png|jpe?g|webp|avif|gif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|css|map)(\?|#|$)/i;
+const SWEEP_MAX_FILES = 40;      // hard cap on downloads
+const SWEEP_CONCURRENCY = 5;
+const SWEEP_BUDGET_MS = 75000;   // total wall-clock budget for the sweep
+const SWEEP_MOD_KEY = /"(choices|choiceGroups|choiceGroup|modifierGroups|modifiers|optionGroups|options|toppings|addons|addOns|extras|variations|selectionGroups)"\s*:\s*\[/;
+
+function sweepAbsUrl(u, base){
+  try{ return new URL(String(u).replace(/\\\//g,"/"), base).href; }catch(e){ return ""; }
+}
+
+/* Score a candidate so the most promising files are downloaded first. */
+function sweepScore(url){
+  let s = 0;
+  if(SWEEP_API_HINT.test(url)) s += 6;
+  if(SWEEP_HINT.test(url)) s += 5;
+  if(/(choice|modifier|topping|addon|option|extra)/i.test(url)) s += 8;
+  if(/\.js(\?|#|$)/i.test(url)) s += 1;
+  if(/(polyfill|analytics|gtm|gtag|facebook|sentry|hotjar|recaptcha|intercom|tracking|vendor-?chunk|framework|webpack|main-app)/i.test(url)) s -= 7;
+  return s;
+}
+
+/* Collect every URL-looking reference inside a text payload. */
+function collectResourceRefs(text, baseUrl, fromDoc){
+  const found = [];
+  const push = u => { if(u) found.push(u); };
+
+  if(fromDoc){
+    try{
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      doc.querySelectorAll("script[src]").forEach(s=>push(s.getAttribute("src")));
+      doc.querySelectorAll("link[href]").forEach(l=>{
+        const rel = (l.getAttribute("rel")||"").toLowerCase();
+        const as = (l.getAttribute("as")||"").toLowerCase();
+        if(/preload|prefetch|modulepreload/.test(rel) && (!as || /script|fetch|document/.test(as))) push(l.getAttribute("href"));
+      });
+    }catch(e){}
+  }
+
+  // Absolute URLs anywhere in the payload (including inside flight strings).
+  const abs = text.match(/https?:\\?\/\\?\/[^\s"'`<>\\)]{10,300}/g) || [];
+  abs.forEach(u=>{ if(SWEEP_API_HINT.test(u) || SWEEP_HINT.test(u)) push(u); });
+
+  // Quoted API-ish paths: "/api/v1/restaurant/123/menu"
+  const pathRe = /["'`](\/[A-Za-z0-9_\-./]{4,220})["'`]/g;
+  let m, guard = 0;
+  while((m = pathRe.exec(text)) && guard < 6000){
+    guard++;
+    const p = m[1];
+    if(SWEEP_SKIP.test(p)) continue;
+    if(SWEEP_API_HINT.test(p) && SWEEP_HINT.test(p)) push(p);
+  }
+
+  const out = [];
+  const seen = new Set();
+  found.forEach(u=>{
+    const a = sweepAbsUrl(u, baseUrl);
+    if(!a || !/^https?:/i.test(a)) return;
+    if(SWEEP_SKIP.test(a)) return;
+    if(seen.has(a)) return;
+    seen.add(a);
+    out.push(a);
+  });
+  return out;
+}
+
+/* Download one sub-resource through the relay stack (reader first). */
+async function fetchResourceText(url){
+  for(const route of FETCH_ROUTES){
+    if(route.label === "jina") continue;              // reformats code files
+    const r = await fetchOnce(route.build(url), Math.min(route.timeout || 12000, 20000));
+    if(r.ok && r.html && r.html.length > 60) return r.html;
+  }
+  return "";
+}
+
+/* Harvest modifier groups out of an arbitrary text payload (JS chunk, JSON
+   response, escaped flight string) without scanning megabytes blindly:
+   only the neighbourhood of each modifier keyword is parsed. */
+function harvestFromText(text, acc){
+  if(!text) return 0;
+  const before = acc.list.length;
+
+  const direct = safeJsonParse(text.trim());
+  if(direct) harvestModifierGroups(direct, acc, 0, new Set());
+
+  const scanWindows = src => {
+    const re = new RegExp(SWEEP_MOD_KEY.source, "gi");
+    let m, hits = 0;
+    while((m = re.exec(src)) && hits < 60){
+      hits++;
+      const start = Math.max(0, m.index - 4000);
+      const slice = src.slice(start, m.index + 60000);
+      scanBalancedJson(slice, SWEEP_MOD_KEY, 30).forEach(j=>harvestModifierGroups(j, acc, 0, new Set()));
+      re.lastIndex = m.index + 1000;
+    }
+  };
+
+  scanWindows(text);
+  if(/\\"(choices|choiceGroups|modifierGroups|options|toppings|addons)\\"/.test(text)){
+    scanWindows(text.replace(/\\"/g, '"').replace(/\\n/g, "\n").replace(/\\\\/g, "\\"));
+  }
+
+  // JSON embedded in a JS chunk as a quoted string literal.
+  const jsonStr = text.match(/JSON\.parse\((["'])([\s\S]{200,400000}?)\1\)/g) || [];
+  jsonStr.slice(0, 12).forEach(chunk=>{
+    const inner = chunk.replace(/^JSON\.parse\(["']/, "").replace(/["']\)$/, "");
+    const unescaped = inner.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    if(SWEEP_MOD_KEY.test(unescaped)) scanWindows(unescaped);
+  });
+
+  return acc.list.length - before;
+}
+
+/* Main sweep. Mutates `acc` and returns a short report for the debug panel. */
+async function sweepPageResources(acc, pageSource, pageUrl, onTick){
+  const report = { queued:0, fetched:0, withGroups:0, groupsFound:0, files:[], skipped:0 };
+  const started = Date.now();
+  const seen = new Set([pageUrl]);
+  let queue = collectResourceRefs(pageSource, pageUrl, true)
+    .filter(u=>!seen.has(u))
+    .map(u=>({ url:u, depth:0, score:sweepScore(u) }));
+
+  queue.forEach(q=>seen.add(q.url));
+  queue.sort((a,b)=>b.score-a.score);
+  report.queued = queue.length;
+
+  const runOne = async job => {
+    if(Date.now() - started > SWEEP_BUDGET_MS || report.fetched >= SWEEP_MAX_FILES){ report.skipped++; return; }
+    const text = await fetchResourceText(job.url);
+    report.fetched++;
+    if(!text) return;
+    if(typeof onTick === "function") onTick(report);
+
+    const gained = harvestFromText(text, acc);
+    if(gained > 0){
+      report.withGroups++;
+      report.groupsFound += gained;
+      report.files.push(job.url.split("?")[0].split("/").slice(-1)[0] + " (+" + gained + ")");
+    }
+
+    // One extra hop: endpoints referenced inside a promising file.
+    if(job.depth < 1 && (gained > 0 || SWEEP_MOD_KEY.test(text))){
+      collectResourceRefs(text, job.url, false)
+        .filter(u=>!seen.has(u) && SWEEP_API_HINT.test(u))
+        .slice(0, 12)
+        .forEach(u=>{ seen.add(u); queue.push({ url:u, depth:job.depth+1, score:sweepScore(u)+3 }); });
+      queue.sort((a,b)=>b.score-a.score);
+    }
+  };
+
+  while(queue.length && report.fetched < SWEEP_MAX_FILES && (Date.now()-started) < SWEEP_BUDGET_MS){
+    const batch = queue.splice(0, SWEEP_CONCURRENCY);
+    await Promise.all(batch.map(runOne));
+  }
+  report.skipped += queue.length;
+  return report;
+}
+
 function groupMatchesLabel(entry, label){
   const target = normalizeModifierKey(label);
   if(!target) return false;
@@ -2754,6 +3226,8 @@ function renderDebug(){
     ["Currency detected", d.detectedCurrency || "—"],
     ["Modifier groups", d.modifierGroups || 0],
     ["Modifier discovery", d.modifierSource || "—"],
+    ["Add-ons endpoint", d.liveChoices || "—"],
+    ["Page files scanned", d.resourceSweep || "—"],
     ["Arabic content", d.arabicSource || "—"],
     ["Arabic coverage", d.arabicCoverage || "—"],
   ];
