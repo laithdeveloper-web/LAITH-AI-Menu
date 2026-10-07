@@ -3333,12 +3333,15 @@ function itemGroups(it){
    - only groups really used by exported items reach the Modifiers sheet. */
 function posKey(v){ return normalizeModifierKey(v); }
 function isSizeExpandable(g){
-  if(!g || !g.options || g.options.length < 2) return false;
+  /* Any single-choice size group (even with one option, and even when the
+     prices are absolute like Medium 26 / Large 46) becomes Menu "Size" rows
+     instead of being pushed into the Modifiers sheet. */
+  if(!g || !g.options || !g.options.length) return false;
   if(g.absoluteSizes) return true;
   const nm = [g.name && g.name.en, g.name && g.name.ar].filter(Boolean);
   if(!nm.some(n=>modifierKind(n)==="size")) return false;
-  if(!(Number(g.min)===1 && Number(g.max)===1)) return false;
-  return g.options.some(o=>Number(o.price)===0);
+  const max = Number(g.max);
+  return !(max > 1);
 }
 function preparePosItems(items){
   const catKeys = new Set(), dishKeys = new Set();
@@ -3365,7 +3368,8 @@ function preparePosItems(items){
     const base = typeof it.price === "number" ? it.price : parseFloat(it.priceText);
     const rows = sizeGroup ? sizeGroup.options.map(o=>{
       const add = typeof o.price === "number" ? o.price : 0;
-      const total = sizeGroup.absoluteSizes ? add : (isNaN(base) ? add : base + add);
+      const absolute = sizeGroup.absoluteSizes || isNaN(base) || base <= 0;
+      const total = absolute ? add : base + add;
       return { size:o.name, priceText: priceToText(round2(total)) };
     }) : [{ size:null, priceText: it.priceText !== undefined && it.priceText !== "" ? it.priceText : priceToText(it.price) }];
     return { it, groups, rows };
